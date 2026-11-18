@@ -16,10 +16,15 @@ HQLA_SCHEMA = ibis.schema(
         "not_pledged_or_operational_cost": "boolean",
         "not_rehypothecated_if_received_in_sft": "boolean",
         "freely_transferable_at_level2": "boolean",
+        "level2_transferable_cap": "decimal(38, 12)",
         "is_host_recognised_ala": "boolean",
         "issuer_restriction_satisfied": "boolean",
         "recognised_by_regulator": "boolean",
         "became_ineligible_within_30_days": "boolean",
+        "days_since_ineligible": "decimal(38, 12)",
+        "hqla2a_diversified": "boolean",
+        "max_30d_price_decline": "decimal(38, 12)",
+        "max_30d_haircut_increase": "decimal(38, 12)",
     }
 )
 
@@ -27,8 +32,10 @@ RETAIL_SCHEMA = ibis.schema(
     {
         "currency": "string",
         "balance": "decimal(38, 12)",
+        "guarantee_limit": "decimal(38, 12)",
         "is_intermediated": "boolean",
         "intermediated_look_through_met": "boolean",
+        "notice_deposit_called": "boolean",
         "residual_maturity_or_notice_gt_30d": "boolean",
         "no_withdrawal_right_or_material_penalty": "boolean",
         "category_tainted_by_early_withdrawal": "boolean",
@@ -99,10 +106,15 @@ def main():
                 True,
                 True,
                 True,
+                Decimal(0),
                 False,
                 True,
                 True,
                 False,
+                Decimal(0),
+                True,
+                Decimal(0),
+                Decimal(0),
             )
         ],
         retail=[],
@@ -145,10 +157,15 @@ def main():
                 True,
                 True,
                 True,
+                Decimal(0),
                 False,
                 True,
                 True,
                 False,
+                Decimal(0),
+                True,
+                Decimal(0),
+                Decimal(0),
             ),
             (
                 "hqla2a",
@@ -160,10 +177,15 @@ def main():
                 True,
                 True,
                 True,
+                Decimal(0),
                 False,
                 True,
                 True,
                 False,
+                Decimal(0),
+                True,
+                Decimal(0),
+                Decimal(0),
             ),  # 20*0.85 = 17
             (
                 "hqla1",
@@ -175,10 +197,15 @@ def main():
                 True,
                 True,
                 True,
+                Decimal(0),
                 False,
                 True,
                 True,
                 False,
+                Decimal(0),
+                True,
+                Decimal(0),
+                Decimal(0),
             ),  # filtered out
         ],
         retail=[
@@ -186,8 +213,10 @@ def main():
             (
                 "AUD",
                 Decimal(100),
+                Decimal(250000),
                 False,
                 True,
+                False,
                 False,
                 False,
                 False,
@@ -203,8 +232,10 @@ def main():
             (
                 "AUD",
                 Decimal(100),
+                Decimal(250000),
                 False,
                 True,
+                False,
                 False,
                 False,
                 False,
@@ -255,6 +286,77 @@ def main():
     assert Decimal(res2["net_cash_outflows"]) == Decimal(15), res2
     assert bool(res2["compliant"]) is True, res2
     print("PASS lcr_aud_scorecard_and_75pct_cap:", res2)
+
+    # Case 3: $500k stable deposit split at $250k FCS limit ($250k*5% + $250k*10% = $37,500)
+    #         + Level 2 non-transferable HQLA capped at level2_transferable_cap
+    hqla3, retail3, outf3, inf3 = make_tables(
+        con,
+        hqla=[
+            (
+                "hqla1",
+                "AUD",
+                Decimal(100000),
+                True,
+                True,
+                True,
+                True,
+                True,
+                False,
+                Decimal(40000),
+                False,
+                True,
+                True,
+                False,
+                Decimal(0),
+                True,
+                Decimal(0),
+                Decimal(0),
+            ),
+        ],
+        retail=[
+            (
+                "AUD",
+                Decimal(500000),
+                Decimal(250000),
+                False,
+                True,
+                False,
+                False,
+                False,
+                False,
+                False,
+                Decimal(0),
+                True,
+                False,
+                False,
+                False,
+                False,
+            ),
+        ],
+        outflows=[],
+        inflows=[],
+    )
+    res3 = {
+        k: con.execute(v)
+        for k, v in evaluate_lcr(
+            hqla3,
+            retail3,
+            outf3,
+            inf3,
+            is_aud_only=False,
+            is_level2=True,
+            required_min_rate=Decimal("1.00"),
+            delta_hqla1=Decimal(0),
+            delta_hqla2a=Decimal(0),
+            delta_hqla2b=Decimal(0),
+            clf_recognised=Decimal(0),
+            foreign_ho_facility_eligible=Decimal(0),
+        ).items()
+    }
+    assert Decimal(res3["stock_of_hqla"]) == Decimal(40000), res3
+    assert Decimal(res3["gross_outflows"]) == Decimal(37500), res3
+    assert bool(res3["compliant"]) is True, res3
+    print("PASS lcr_500k_fcs_split_and_l2_cap:", res3)
 
 
 if __name__ == "__main__":

@@ -256,14 +256,18 @@ def upstreamProgram : Program :=
           .agg .count collateralLookbackInWindowRel (.col "valuation_date"))
       , ("collat_min_after_23m",
           .agg .min collateralLookbackInWindowRel (.col "days_after_23m_anchor"))
+      , ("collat_distinct_months",
+          .agg .countDistinct collateralLookbackInWindowRel (.yearMonth (.col "valuation_date")))
       , ("collateral_lookback_valid",
-          .scalar (.binOp .and (.binOp .gt (.var "collat_cnt") (.litRat 0 1)) (.binOp .le (.var "collat_min_after_23m") (.litRat 0 1))))
+          .scalar (.binOp .and (.binOp .gt (.var "collat_cnt") (.litRat 0 1))
+            (.binOp .and (.binOp .le (.var "collat_min_after_23m") (.litRat 0 1))
+              (.binOp .ge (.var "collat_distinct_months") (.litRat 24 1)))))
       , ("avg_12m_net_outflow",
           .agg .avg monthly12mWindowRel (.col "net_cash_outflow"))
       , ("m12_cnt",
           .agg .count monthly12mWindowRel (.col "month_end_date"))
       , ("m12_distinct",
-          .agg .countDistinct monthly12mWindowRel (.col "month_end_date"))
+          .agg .countDistinct monthly12mWindowRel (.yearMonth (.col "month_end_date")))
       , ("avg_12m_valid",
           .scalar (.binOp .and (.binOp .eq (.var "m12_cnt") (.litRat 12 1)) (.binOp .eq (.var "m12_distinct") (.litRat 12 1))))
       , ("ecai_resolved_grade_sum",
@@ -451,7 +455,8 @@ def smokeInput : UpstreamInput :=
       , { currency := "JPY", hqla1ForeignSovAmt := 50, ccyNetOutflow := -10 }
       ]
   , dailyCollateralFlows :=
-      [{ valuationDate := civilDate 2024 6 30, netCollateralFlow := 0 }] ++
+      ((List.range 25).map (fun (m : Nat) =>
+        { valuationDate := addMonthsEpoch (civilDate 2024 6 30) (m : Int), netCollateralFlow := 0 })) ++
       (List.range 35).map (fun (i : Nat) =>
         { valuationDate := civilDate 2026 1 1 + (i : Int)
         , netCollateralFlow := if i < 30 then 1 else -20

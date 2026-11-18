@@ -2,6 +2,7 @@ import APS210.Basic
 import APS210.LCR.Outflows
 import APS210.LCR.Inflows
 import APS210.NSFR
+import APS210.Upstream
 
 namespace APS210.CashFlows
 
@@ -89,11 +90,25 @@ def classifyHorizon (days : Nat) : CashFlowHorizon :=
   else if days < 365 then .sixMonthsToLessThan1y
   else .oneYearOrMore
 
-/-- Classify day count into an NSFR maturity bucket (`<180d`, `180..364d`, `>=365d`). -/
-def classifyNsfrDays (days : Nat) : NSFR.NsfrMaturityBucket :=
-  if days < 180 then .lessThanSixMonths
-  else if days < 365 then .sixMonthsToLessThanOneYear
+/-- Calendar-based NSFR boundary days `(sixMonthsDays, oneYearDays)` relative to `reportingDate`. -/
+def nsfrBoundaryDays (reportingDate? : Option Upstream.EpochDate := none) : Nat × Nat :=
+  match reportingDate? with
+  | some rd =>
+    let sixM := (Upstream.addMonthsEpoch rd 6 - rd).toNat
+    let oneY := (Upstream.addMonthsEpoch rd 12 - rd).toNat
+    (sixM, oneY)
+  | none => (180, 365)
+
+/-- Classify day count into an NSFR maturity bucket using calendar boundaries when `reportingDate?` is provided. -/
+def classifyNsfrDaysCal (reportingDate? : Option Upstream.EpochDate) (days : Nat) : NSFR.NsfrMaturityBucket :=
+  let (sixM, oneY) := nsfrBoundaryDays reportingDate?
+  if days < sixM then .lessThanSixMonths
+  else if days < oneY then .sixMonthsToLessThanOneYear
   else .oneYearOrMore
+
+/-- Classify day count into an NSFR maturity bucket (`<180d`, `180..364d`, `>=365d` fallback when no date given). -/
+def classifyNsfrDays (days : Nat) : NSFR.NsfrMaturityBucket :=
+  classifyNsfrDaysCal none days
 
 /-- Whether an inflow leg is eligible under Att A Paras 31, 54, 60, and 66. -/
 def ContractualCashFlow.isEligibleLcrInflow (f : ContractualCashFlow) : Bool :=
@@ -161,10 +176,11 @@ def splitLiabilityCashFlowsForAsf
     (idPrefix : String)
     (lt6mCat sixTo1yCat ge1yCat : NSFR.AsfCategory)
     (legs : List (Money × Nat))
-    (isInterdependentApproved : Bool := false) : List NSFR.AsfItem :=
-  let lt6mAmt := sumBy (legs.filter (fun (_, d) => classifyNsfrDays d == .lessThanSixMonths)) (fun (a, _) => nonNeg a)
-  let midAmt := sumBy (legs.filter (fun (_, d) => classifyNsfrDays d == .sixMonthsToLessThanOneYear)) (fun (a, _) => nonNeg a)
-  let ge1yAmt := sumBy (legs.filter (fun (_, d) => classifyNsfrDays d == .oneYearOrMore)) (fun (a, _) => nonNeg a)
+    (isInterdependentApproved : Bool := false)
+    (reportingDate? : Option Upstream.EpochDate := none) : List NSFR.AsfItem :=
+  let lt6mAmt := sumBy (legs.filter (fun (_, d) => classifyNsfrDaysCal reportingDate? d == .lessThanSixMonths)) (fun (a, _) => nonNeg a)
+  let midAmt := sumBy (legs.filter (fun (_, d) => classifyNsfrDaysCal reportingDate? d == .sixMonthsToLessThanOneYear)) (fun (a, _) => nonNeg a)
+  let ge1yAmt := sumBy (legs.filter (fun (_, d) => classifyNsfrDaysCal reportingDate? d == .oneYearOrMore)) (fun (a, _) => nonNeg a)
   [ { id := idPrefix ++ "-lt6m", category := lt6mCat, carryingValue := lt6mAmt, isInterdependentApproved }
   , { id := idPrefix ++ "-6m1y", category := sixTo1yCat, carryingValue := midAmt, isInterdependentApproved }
   , { id := idPrefix ++ "-ge1y", category := ge1yCat, carryingValue := ge1yAmt, isInterdependentApproved } ]
@@ -177,9 +193,13 @@ def splitAmortisingLoanForRsf
     (lt1yCat ge1yCat : NSFR.RsfCategory)
     (legs : List (Money × Nat))
     (encumbrance : NSFR.EncumbrancePeriod := .unencumbered)
-    (isInterdependentApproved : Bool := false) : List NSFR.RsfAssetItem :=
-  let lt1yAmt := sumBy (legs.filter (fun (_, d) => d < 365)) (fun (a, _) => nonNeg a)
-  let ge1yAmt := sumBy (legs.filter (fun (_, d) => d >= 365)) (fun (a, _) => nonNeg a)
+    (isInterdependentApproved : Bool := false)
+    (reportingDate? : Option Upstream.EpochDate := none) : List NSFR.RsfAssetItem :=
+  let oneY := match reportingDate? with
+    | some rd => (Upstream.addMonthsEpoch rd 12 - rd).toNat
+    | none => 365
+  let lt1yAmt := sumBy (legs.filter (fun (_, d) => d < oneY)) (fun (a, _) => nonNeg a)
+  let ge1yAmt := sumBy (legs.filter (fun (_, d) => d >= oneY)) (fun (a, _) => nonNeg a)
   [ { id := idPrefix ++ "-lt1y", category := lt1yCat, carryingValue := lt1yAmt, encumbrance, isInterdependentApproved }
   , { id := idPrefix ++ "-ge1y", category := ge1yCat, carryingValue := ge1yAmt, encumbrance, isInterdependentApproved } ]
 

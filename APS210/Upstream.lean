@@ -214,8 +214,12 @@ structure DailyCollateralFlow where
 
 private def absRat (x : Rat) : Rat := if x < 0 then -x else x
 
+private def yearMonthOfEpoch (d : EpochDate) : Int :=
+  let (y, m, _) := civilFromEpoch d
+  y * 100 + (m : Int)
+
 /-- Calendar-date 30-day rolling collateral lookback over trailing 24 months,
-    plus lookback coverage validation (at least one record reaching back >= 23 months). -/
+    plus lookback coverage validation: must span back >= 23 months AND cover >= 24 distinct `(year, month)` buckets. -/
 def max30dCollateralOutflowCal (reportingDate : EpochDate) (flows : List DailyCollateralFlow) : Money × Bool :=
   let lookback24m := addMonthsEpoch reportingDate (-24)
   let lookback23m := addMonthsEpoch reportingDate (-23)
@@ -225,7 +229,8 @@ def max30dCollateralOutflowCal (reportingDate : EpochDate) (flows : List DailyCo
     absRat (sumBy frame (·.netCollateralFlow)))
   let maxOut := rollingAbs.foldl max 0
   let hasEarlyCoverage := inWindow.any (fun f => f.valuationDate ≤ lookback23m)
-  (maxOut, !inWindow.isEmpty && hasEarlyCoverage)
+  let distinctMonths := (inWindow.map (fun f => yearMonthOfEpoch f.valuationDate)).eraseDups.length
+  (maxOut, !inWindow.isEmpty && hasEarlyCoverage && distinctMonths ≥ 24)
 
 def max30dCollateralOutflow (flows : List DailyCollateralFlow) : Money :=
   let sorted := flows.mergeSort (fun a b => a.valuationDate ≤ b.valuationDate)
@@ -246,14 +251,14 @@ structure MonthlyNetOutflow where
   deriving DecidableEq, Repr
 
 /-- Select trailing 12-month window `(reportingDate - 12m, reportingDate]`,
-    validate 12 distinct monthly observations, and compute the average. -/
+    validate 12 observations across 12 distinct `(year, month)` buckets, and compute the average. -/
 def avg12mNetOutflowCal (reportingDate : EpochDate) (months : List MonthlyNetOutflow) : Money × Bool :=
   let start12m := addMonthsEpoch reportingDate (-12)
   let inWindow := months.filter (fun m => start12m < m.monthEndDate && m.monthEndDate ≤ reportingDate)
   let cnt := inWindow.length
-  let distinctCnt := (inWindow.map (·.monthEndDate)).eraseDups.length
+  let distinctMonths := (inWindow.map (fun m => yearMonthOfEpoch m.monthEndDate)).eraseDups.length
   let avg := if cnt == 0 then 0 else sumBy inWindow (·.netCashOutflow) / (cnt : Rat)
-  (avg, cnt == 12 && distinctCnt == 12)
+  (avg, cnt == 12 && distinctMonths == 12)
 
 def avg12mNetOutflow (months : List MonthlyNetOutflow) : Money :=
   if months.isEmpty then 0

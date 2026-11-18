@@ -97,37 +97,68 @@ def hqlaValueAfterHaircutExpr : SExpr :=
         (.binOp .and (.col "not_pledged_or_operational_cost")
           (.col "not_rehypothecated_if_received_in_sft"))))
   let basisOk := .ite (.var "is_level2")
-    (.col "freely_transferable_at_level2")
+    (.litBool true)
     (.unOp .not (.col "is_host_recognised_ala"))
+  let divOk := .binOp .or
+    (.binOp .ne (.col "category") (.litStr "hqla2a"))
+    (.col "hqla2a_diversified")
+  let stressLimit := .caseStr (.col "category")
+    [ ("hqla2a", .litRat 10 100)
+    , ("hqla2b_rmbs", .litRat 20 100)
+    , ("hqla2b_corporate_debt", .litRat 20 100)
+    , ("hqla2b_equity", .litRat 40 100) ]
+    (.litRat 1 1)
+  let stressOk := .binOp .or
+    (.binOp .eq (.col "category") (.litStr "hqla1"))
+    (.binOp .and
+      (.binOp .le (.unOp .nonNeg (.col "max_30d_price_decline")) stressLimit)
+      (.binOp .le (.unOp .nonNeg (.col "max_30d_haircut_increase")) stressLimit))
+  let graceOk := .binOp .and (.col "became_ineligible_within_30_days")
+    (.binOp .le (.col "days_since_ineligible") (.litRat 30 1))
   let eligOk := .binOp .or
     (.binOp .and (.col "issuer_restriction_satisfied") (.col "recognised_by_regulator"))
-    (.col "became_ineligible_within_30_days")
-  let ok := .binOp .and opOk (.binOp .and eligOk basisOk)
-  .ite ok (.binOp .mul (.unOp .nonNeg (.col "market_value")) hqlaWeightExpr) (.litRat 0 1)
+    graceOk
+  let ok := .binOp .and opOk (.binOp .and eligOk (.binOp .and basisOk (.binOp .and divOk stressOk)))
+  let mv := .unOp .nonNeg (.col "market_value")
+  let cappedMv := .ite
+    (.binOp .and (.var "is_level2") (.unOp .not (.col "freely_transferable_at_level2")))
+    (.binOp .min mv (.unOp .nonNeg (.col "level2_transferable_cap")))
+    mv
+  .ite ok (.binOp .mul cappedMv hqlaWeightExpr) (.litRat 0 1)
 
-/-- Attachment A, Tables 1 & 2: Retail deposit outflow expression. -/
+/-- Attachment A, Tables 1 & 2: Retail deposit outflow expression (with `$250k` / `guarantee_limit` split). -/
 def retailOutflowExpr : SExpr :=
-  let score :=
+  let bal := .unOp .nonNeg (.col "balance")
+  let lim := .unOp .nonNeg (.col "guarantee_limit")
+  let baseScore :=
     .binOp .add
-      (.ite (.col "above_guarantee_limit_or_250k") (.litRat 2 1) (.litRat 0 1))
+      (.ite (.col "is_online_account") (.litRat 2 1) (.litRat 0 1))
       (.binOp .add
-        (.ite (.col "is_online_account") (.litRat 2 1) (.litRat 0 1))
-        (.binOp .add
-          (.ite (.col "no_established_relationship") (.litRat 1 1) (.litRat 0 1))
-          (.ite (.col "is_heavily_rate_driven") (.litRat 1 1) (.litRat 0 1))))
-  let lessStableRate := .ite (.binOp .le score (.litRat 2 1)) (.litRat 10 100) (.litRat 25 100)
+        (.ite (.col "no_established_relationship") (.litRat 1 1) (.litRat 0 1))
+        (.ite (.col "is_heavily_rate_driven") (.litRat 1 1) (.litRat 0 1)))
+  let excessScore := .binOp .add (.litRat 2 1) baseScore
+  let excessRate := .ite (.binOp .le excessScore (.litRat 2 1)) (.litRat 10 100) (.litRat 25 100)
+  let effScore := .binOp .add
+    (.ite (.binOp .or (.col "above_guarantee_limit_or_250k") (.binOp .gt bal lim))
+      (.litRat 2 1) (.litRat 0 1))
+    baseScore
+  let lessStableRate := .ite (.binOp .le effScore (.litRat 2 1)) (.litRat 10 100) (.litRat 25 100)
+  let stableOutflow :=
+    .binOp .add
+      (.binOp .mul (.binOp .min bal lim) (.litRat 5 100))
+      (.binOp .mul (.unOp .nonNeg (.binOp .sub bal lim)) excessRate)
   let excludedTerm := .binOp .and (.col "residual_maturity_or_notice_gt_30d")
     (.binOp .and (.col "no_withdrawal_right_or_material_penalty")
       (.unOp .not (.col "category_tainted_by_early_withdrawal")))
-  let rate :=
-    .ite (.binOp .and (.col "is_intermediated") (.unOp .not (.col "intermediated_look_through_met")))
-      (.ite (.binOp .and (.col "residual_maturity_or_notice_gt_30d") (.col "no_withdrawal_right_or_material_penalty"))
-        (.litRat 0 1) (.litRat 1 1))
-      (.ite excludedTerm (.litRat 0 1)
+  .ite (.binOp .and (.col "is_intermediated") (.unOp .not (.col "intermediated_look_through_met")))
+    (.ite excludedTerm (.litRat 0 1) bal)
+    (.ite (.col "notice_deposit_called")
+      bal
+      (.ite excludedTerm
+        (.litRat 0 1)
         (.ite (.binOp .and (.var "is_level2") (.col "has_host_override"))
-          (.unOp .nonNeg (.col "host_override_rate"))
-          (.ite (.col "is_stable") (.litRat 5 100) lessStableRate)))
-  .binOp .mul (.unOp .nonNeg (.col "balance")) rate
+          (.binOp .mul bal (.unOp .nonNeg (.col "host_override_rate")))
+          (.ite (.col "is_stable") stableOutflow (.binOp .mul bal lessStableRate)))))
 
 /-- Attachment A, Table 3: All 40 cash outflow categories. -/
 def table3RateExpr : SExpr :=
@@ -220,9 +251,11 @@ def lcrProgram : Program :=
       [ ("hqla_assets", ["category", "currency", "market_value", "convertible_to_cash_anytime",
           "unencumbered_and_controlled", "control_evidenced", "not_pledged_or_operational_cost",
           "not_rehypothecated_if_received_in_sft", "freely_transferable_at_level2",
-          "is_host_recognised_ala", "issuer_restriction_satisfied", "recognised_by_regulator",
-          "became_ineligible_within_30_days"])
-      , ("retail_deposits", ["currency", "balance", "is_intermediated", "intermediated_look_through_met",
+          "level2_transferable_cap", "is_host_recognised_ala", "issuer_restriction_satisfied",
+          "recognised_by_regulator", "became_ineligible_within_30_days", "days_since_ineligible",
+          "hqla2a_diversified", "max_30d_price_decline", "max_30d_haircut_increase"])
+      , ("retail_deposits", ["currency", "balance", "guarantee_limit", "is_intermediated",
+          "intermediated_look_through_met", "notice_deposit_called",
           "residual_maturity_or_notice_gt_30d", "no_withdrawal_right_or_material_penalty",
           "category_tainted_by_early_withdrawal", "has_host_override",
           "host_override_rate", "is_stable", "above_guarantee_limit_or_250k",

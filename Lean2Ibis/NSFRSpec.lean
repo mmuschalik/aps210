@@ -161,7 +161,7 @@ def nsfrProgram : Program :=
       [ ("required_min_rate", .rat)
       , ("gross_deriv_liabilities", .rat), ("variation_margin_posted", .rat)
       , ("gross_deriv_assets", .rat), ("eligible_cash_vm_received", .rat)
-      , ("has_clf_limit", .bool), ("recognised_clf_limit", .rat) ]
+      , ("has_clf_limit", .bool), ("recognised_clf_limit", .rat), ("host_ala_in_lcr_limit", .rat) ]
     lets :=
       [ ("total_asf", .aggSum (.table "asf_items")
           (.binOp .mul (.unOp .nonNeg (.col "carrying_value")) asfFactorExpr))
@@ -173,15 +173,19 @@ def nsfrProgram : Program :=
       , ("total_32a", .aggSum (.filter is32a (.table "rsf_assets")) (.unOp .nonNeg (.col "carrying_value")))
       , ("total_32b", .aggSum (.filter is32b (.table "rsf_assets")) (.unOp .nonNeg (.col "carrying_value")))
       , ("clf_lim", .scalar (.unOp .nonNeg (.col "recognised_clf_limit")))
-      , ("elig_32a", .scalar (.binOp .min (.col "total_32a") (.col "clf_lim")))
+      , ("clf_32a_lim", .scalar (.binOp .add (.col "clf_lim") (.unOp .nonNeg (.col "host_ala_in_lcr_limit"))))
+      , ("elig_32a", .scalar (.binOp .min (.col "total_32a") (.col "clf_32a_lim")))
       , ("excess_32a", .scalar (.binOp .sub (.col "total_32a") (.col "elig_32a")))
-      , ("rem_lim", .scalar (.unOp .nonNeg (.binOp .sub (.col "clf_lim") (.col "elig_32a"))))
+      , ("rem_32a_lim", .scalar (.unOp .nonNeg (.binOp .sub (.col "clf_32a_lim") (.col "total_32a"))))
+      , ("rem_lim", .scalar (.binOp .min (.col "clf_lim") (.col "rem_32a_lim")))
       , ("elig_32b", .scalar (.binOp .min (.col "total_32b") (.col "rem_lim")))
       , ("excess_32b", .scalar (.binOp .sub (.col "total_32b") (.col "elig_32b")))
       , ("capped_asset_rsf", .scalar (.binOp .add (.col "non_clf_rsf")
           (.binOp .add
             (.binOp .mul (.litRat 10 100) (.binOp .add (.col "elig_32a") (.col "elig_32b")))
-            (.binOp .mul (.litRat 1 1) (.binOp .add (.col "excess_32a") (.col "excess_32b"))))))
+            (.binOp .add
+              (.binOp .mul (.litRat 50 100) (.col "excess_32a"))
+              (.binOp .mul (.litRat 85 100) (.col "excess_32b"))))))
       , ("asset_rsf", .scalar (.ite (.col "has_clf_limit") (.col "capped_asset_rsf") (.col "raw_asset_rsf")))
       , ("obs_rsf", .aggSum (.table "obs_exposures")
           (.binOp .mul (.unOp .nonNeg (.col "amount")) obsFactorExpr))

@@ -109,10 +109,14 @@ def main() -> None:
     )
 
     # 5. Daily collateral flows (calendar 30d window + 24m lookback coverage)
-    flow_dates = [datetime.date(2024, 6, 30)] + [
+    month_anchors = [
+        datetime.date(2024 + (6 + m - 1) // 12, ((6 + m - 1) % 12) + 1, 15)
+        for m in range(25)
+    ]
+    flow_dates = month_anchors + [
         datetime.date(2026, 1, 1) + datetime.timedelta(days=i) for i in range(35)
     ]
-    flow_vals = [Decimal(0)] + [
+    flow_vals = [Decimal(0)] * len(month_anchors) + [
         Decimal(1) if i < 30 else Decimal(-20) for i in range(35)
     ]
     daily_collateral_flows = ibis.memtable(
@@ -210,7 +214,7 @@ def main() -> None:
         "fcs_insured_deposits": Decimal(500000),
         "excluded_term_deposits": Decimal(4000000),
         "capped_foreign_sov_hqla1": Decimal(140),
-        "max_30d_collateral_outflow": Decimal(75),
+        "max_30d_collateral_outflow": Decimal(86),
         "collateral_lookback_valid": True,
         "avg_12m_net_outflow": Decimal(155),
         "avg_12m_valid": True,

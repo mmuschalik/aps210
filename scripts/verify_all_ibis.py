@@ -139,10 +139,11 @@ def main():
             eligible_cash_vm_received=Decimal(0),
             has_clf_limit=True,
             recognised_clf_limit=Decimal(20),
+            host_ala_in_lcr_limit=Decimal(0),
         ).items()
     }
     assert Decimal(nsfr_res["total_asf"]) == Decimal(125), nsfr_res
-    assert Decimal(nsfr_res["total_rsf"]) == Decimal(84), nsfr_res
+    assert Decimal(nsfr_res["total_rsf"]) == Decimal("83.25"), nsfr_res
     assert bool(nsfr_res["compliant"]) is True, nsfr_res
     print("PASS nsfr_clf_cap_and_derivatives:", nsfr_res)
 

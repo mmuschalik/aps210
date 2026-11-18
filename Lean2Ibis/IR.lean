@@ -118,6 +118,7 @@ inductive SExpr where
   | litStr (s : String)
   | litDate (y : Int) (m d : Nat)
   | dateAddMonths (d : SExpr) (months : Int)
+  | yearMonth (d : SExpr)
   | unOp (op : UnOp) (e : SExpr)
   | binOp (op : BinOp) (l r : SExpr)
   | ite (cond thenE elseE : SExpr)
@@ -133,6 +134,9 @@ def evalSExpr (env : Row) : SExpr → Val
   | .litStr s => .str s
   | .litDate y m d => .date (daysFromCivil y m d)
   | .dateAddMonths d m => .date (addMonthsToEpoch (evalSExpr env d).asDate m)
+  | .yearMonth d =>
+    let (y, m, _) := civilFromDays (evalSExpr env d).asDate
+    .rat (y * 100 + (m : Int))
   | .unOp op e =>
     let v := evalSExpr env e
     match op with

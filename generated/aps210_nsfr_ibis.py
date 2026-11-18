@@ -17,6 +17,7 @@ def evaluate_nsfr(
     eligible_cash_vm_received,
     has_clf_limit,
     recognised_clf_limit,
+    host_ala_in_lcr_limit,
 ):
     required_min_rate = ibis.literal(
         Decimal(str(required_min_rate)), type="decimal(38, 12)"
@@ -36,6 +37,9 @@ def evaluate_nsfr(
     has_clf_limit = ibis.literal(bool(has_clf_limit))
     recognised_clf_limit = ibis.literal(
         Decimal(str(recognised_clf_limit)), type="decimal(38, 12)"
+    )
+    host_ala_in_lcr_limit = ibis.literal(
+        Decimal(str(host_ala_in_lcr_limit)), type="decimal(38, 12)"
     )
     total_asf = ibis.coalesce(
         (asf_items)
@@ -5064,11 +5068,15 @@ def evaluate_nsfr(
     clf_lim = ibis.greatest(
         recognised_clf_limit, ibis.literal(0, type="decimal(38, 12)")
     )
-    elig_32a = ibis.least(total_32a, clf_lim)
-    excess_32a = total_32a - elig_32a
-    rem_lim = ibis.greatest(
-        (clf_lim - elig_32a), ibis.literal(0, type="decimal(38, 12)")
+    clf_32a_lim = clf_lim + ibis.greatest(
+        host_ala_in_lcr_limit, ibis.literal(0, type="decimal(38, 12)")
     )
+    elig_32a = ibis.least(total_32a, clf_32a_lim)
+    excess_32a = total_32a - elig_32a
+    rem_32a_lim = ibis.greatest(
+        (clf_32a_lim - total_32a), ibis.literal(0, type="decimal(38, 12)")
+    )
+    rem_lim = ibis.least(clf_lim, rem_32a_lim)
     elig_32b = ibis.least(total_32b, rem_lim)
     excess_32b = total_32b - elig_32b
     capped_asset_rsf = non_clf_rsf + (
@@ -5079,7 +5087,22 @@ def evaluate_nsfr(
             )
             * (elig_32a + elig_32b)
         )
-        + (ibis.literal(1, type="decimal(38, 12)") * (excess_32a + excess_32b))
+        + (
+            (
+                (
+                    ibis.literal(50, type="decimal(38, 12)")
+                    / ibis.literal(100, type="decimal(38, 12)")
+                )
+                * excess_32a
+            )
+            + (
+                (
+                    ibis.literal(85, type="decimal(38, 12)")
+                    / ibis.literal(100, type="decimal(38, 12)")
+                )
+                * excess_32b
+            )
+        )
     )
     asset_rsf = ibis.ifelse(has_clf_limit, capped_asset_rsf, raw_asset_rsf)
     obs_rsf = ibis.coalesce(

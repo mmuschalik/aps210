@@ -770,9 +770,65 @@ def evaluate_aps210_upstream(
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),
     )
+    collat_distinct_months = ibis.coalesce(
+        (
+            (
+                (daily_collateral_flows).filter(
+                    lambda t: (
+                        (
+                            (
+                                t["valuation_date"]
+                                .delta(
+                                    (reporting_date + ibis.interval(months=-24)).cast(
+                                        "date"
+                                    ),
+                                    unit="day",
+                                )
+                                .cast("decimal(38, 12)")
+                            )
+                            >= ibis.literal(0, type="decimal(38, 12)")
+                        )
+                        & (
+                            (
+                                t["valuation_date"]
+                                .delta(reporting_date, unit="day")
+                                .cast("decimal(38, 12)")
+                            )
+                            <= ibis.literal(0, type="decimal(38, 12)")
+                        )
+                    )
+                )
+            ).mutate(
+                days_after_23m_anchor=lambda t: (
+                    t["valuation_date"]
+                    .delta(
+                        (reporting_date + ibis.interval(months=-23)).cast("date"),
+                        unit="day",
+                    )
+                    .cast("decimal(38, 12)")
+                )
+            )
+        )
+        .aggregate(
+            val=lambda t: (
+                (
+                    (
+                        t["valuation_date"].year() * 100 + t["valuation_date"].month()
+                    ).cast("decimal(38, 12)")
+                )
+                .nunique()
+                .cast("decimal(38, 12)")
+            )
+        )["val"]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
     collateral_lookback_valid = (
         collat_cnt > ibis.literal(0, type="decimal(38, 12)")
-    ) & (collat_min_after_23m <= ibis.literal(0, type="decimal(38, 12)"))
+    ) & (
+        (collat_min_after_23m <= ibis.literal(0, type="decimal(38, 12)"))
+        & (collat_distinct_months >= ibis.literal(24, type="decimal(38, 12)"))
+    )
     avg_12m_net_outflow = ibis.coalesce(
         (
             (monthly_net_outflows).filter(
@@ -870,7 +926,15 @@ def evaluate_aps210_upstream(
             )
         )
         .aggregate(
-            val=lambda t: (t["month_end_date"]).nunique().cast("decimal(38, 12)")
+            val=lambda t: (
+                (
+                    (
+                        t["month_end_date"].year() * 100 + t["month_end_date"].month()
+                    ).cast("decimal(38, 12)")
+                )
+                .nunique()
+                .cast("decimal(38, 12)")
+            )
         )["val"]
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),

@@ -184,6 +184,7 @@ def compileSExpr : SExpr → SqlExpr
   | .litStr s => .litStr s
   | .litDate y m d => .litNum (daysFromCivil y m d) 1
   | .dateAddMonths d m => .bin .add (compileSExpr d) (.litNum (m * 30) 1)
+  | .yearMonth d => compileSExpr d
   | .unOp .not e => .not (compileSExpr e)
   | .unOp .nonNeg e => .greatestZero (compileSExpr e)
   | .unOp .abs e =>
