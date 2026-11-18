@@ -223,6 +223,80 @@ def main():
     )  # 50 + 6 obs
     print("PASS nsfr_missing_clf_limit_uses_zero:", nsfr_no_clf_res)
 
+    # 1c. NSFR contract-level precedence + mixed netting-set eligibility
+    empty_asf = ibis.memtable(
+        pd.DataFrame([], columns=list(ASF_SCHEMA.names)), schema=ASF_SCHEMA
+    )
+    empty_rsf = ibis.memtable(
+        pd.DataFrame([], columns=list(RSF_SCHEMA.names)), schema=RSF_SCHEMA
+    )
+    empty_obs = ibis.memtable(
+        pd.DataFrame([], columns=list(OBS_SCHEMA.names)), schema=OBS_SCHEMA
+    )
+    deriv_prec = ibis.memtable(
+        pd.DataFrame(
+            [("ns1", True, Decimal(20), Decimal(0))],
+            columns=list(NSFR_DERIV_SCHEMA.names),
+        ),
+        schema=NSFR_DERIV_SCHEMA,
+    )
+    res_prec = {
+        k: con.execute(v)
+        for k, v in evaluate_nsfr(
+            empty_asf,
+            empty_rsf,
+            empty_obs,
+            deriv_prec,
+            required_min_rate=Decimal("1.00"),
+            gross_deriv_liabilities=Decimal(0),
+            variation_margin_posted=Decimal(0),
+            gross_deriv_assets=Decimal(100),
+            eligible_cash_vm_received=Decimal(0),
+            cash_vm_eligibility_ok=True,
+            has_clf_limit=False,
+            recognised_clf_limit=Decimal(0),
+            host_ala_in_lcr_limit=Decimal(0),
+            internal_nsfr_buffer=Decimal(0),
+        ).items()
+    }
+    assert Decimal(res_prec["total_rsf"]) == Decimal(20), res_prec
+    deriv_mixed = ibis.memtable(
+        pd.DataFrame(
+            [
+                ("ns1", True, Decimal(100), Decimal(0)),
+                ("ns1", True, Decimal(0), Decimal(90)),
+                ("ns1", False, Decimal(0), Decimal(50)),
+            ],
+            columns=list(NSFR_DERIV_SCHEMA.names),
+        ),
+        schema=NSFR_DERIV_SCHEMA,
+    )
+    res_mixed = {
+        k: con.execute(v)
+        for k, v in evaluate_nsfr(
+            empty_asf,
+            empty_rsf,
+            empty_obs,
+            deriv_mixed,
+            required_min_rate=Decimal("1.00"),
+            gross_deriv_liabilities=Decimal(0),
+            variation_margin_posted=Decimal(0),
+            gross_deriv_assets=Decimal(0),
+            eligible_cash_vm_received=Decimal(0),
+            cash_vm_eligibility_ok=True,
+            has_clf_limit=False,
+            recognised_clf_limit=Decimal(0),
+            host_ala_in_lcr_limit=Decimal(0),
+            internal_nsfr_buffer=Decimal(0),
+        ).items()
+    }
+    assert Decimal(res_mixed["total_rsf"]) == Decimal(28), res_mixed
+    print(
+        "PASS nsfr_deriv_precedence_and_mixed_mna:",
+        res_prec["total_rsf"],
+        res_mixed["total_rsf"],
+    )
+
     # 2. External standards rules
     ext_res = {
         k: con.execute(v)

@@ -203,32 +203,33 @@ def nsfrProgram : Program :=
       , ("asset_rsf", .scalar (.binOp .add (.col "non_clf_rsf") (.binOp .add (.col "rsf_32a") (.col "rsf_32b"))))
       , ("obs_rsf", .aggSum (.table "obs_exposures")
           (.binOp .mul (.unOp .nonNeg (.col "amount")) obsFactorExpr))
-      , ("mna_deriv_net", .agg .sum
+      , ("deriv_contract_count", .agg .count (.table "nsfr_deriv_contracts") (.col "netting_set_id"))
+      , ("contract_deriv_assets", .agg .sum
           (.withColumns
-            [ ("pos_net_asset", .unOp .nonNeg (.binOp .sub (.col "net_asset") (.col "net_liab"))) ]
+            [ ("set_asset", .ite (.col "all_elig")
+                (.unOp .nonNeg (.col "net_rc")) (.col "pos_gross")) ]
             (.groupBy ["netting_set_id"]
-              [ ("net_asset", .sum, .unOp .nonNeg (.col "mtm_asset"))
-              , ("net_liab", .sum, .unOp .nonNeg (.col "mtm_liability")) ]
-              (.filter (.col "has_eligible_mna") (.table "nsfr_deriv_contracts"))))
-          (.col "pos_net_asset"))
-      , ("mna_deriv_net_liab", .agg .sum
+              [ ("all_elig", .allBool, .col "has_eligible_mna")
+              , ("net_rc", .sum, .binOp .sub (.unOp .nonNeg (.col "mtm_asset")) (.unOp .nonNeg (.col "mtm_liability")))
+              , ("pos_gross", .sum, .unOp .nonNeg (.col "mtm_asset")) ]
+              (.table "nsfr_deriv_contracts")))
+          (.col "set_asset"))
+      , ("contract_deriv_liab", .agg .sum
           (.withColumns
-            [ ("pos_net_liab", .unOp .nonNeg (.binOp .sub (.col "net_liab") (.col "net_asset"))) ]
+            [ ("set_liab", .ite (.col "all_elig")
+                (.unOp .nonNeg (.binOp .sub (.litRat 0 1) (.col "net_rc"))) (.col "neg_gross")) ]
             (.groupBy ["netting_set_id"]
-              [ ("net_asset", .sum, .unOp .nonNeg (.col "mtm_asset"))
-              , ("net_liab", .sum, .unOp .nonNeg (.col "mtm_liability")) ]
-              (.filter (.col "has_eligible_mna") (.table "nsfr_deriv_contracts"))))
-          (.col "pos_net_liab"))
-      , ("gross_deriv_c_assets", .aggSum
-          (.filter (.unOp .not (.col "has_eligible_mna")) (.table "nsfr_deriv_contracts"))
-          (.unOp .nonNeg (.col "mtm_asset")))
-      , ("gross_deriv_c_liab", .aggSum
-          (.filter (.unOp .not (.col "has_eligible_mna")) (.table "nsfr_deriv_contracts"))
-          (.unOp .nonNeg (.col "mtm_liability")))
-      , ("eff_gross_deriv_liab", .scalar (.binOp .add (.unOp .nonNeg (.col "gross_deriv_liabilities"))
-          (.binOp .add (.col "mna_deriv_net_liab") (.col "gross_deriv_c_liab"))))
-      , ("eff_gross_deriv_assets", .scalar (.binOp .add (.unOp .nonNeg (.col "gross_deriv_assets"))
-          (.binOp .add (.col "mna_deriv_net") (.col "gross_deriv_c_assets"))))
+              [ ("all_elig", .allBool, .col "has_eligible_mna")
+              , ("net_rc", .sum, .binOp .sub (.unOp .nonNeg (.col "mtm_asset")) (.unOp .nonNeg (.col "mtm_liability")))
+              , ("neg_gross", .sum, .unOp .nonNeg (.col "mtm_liability")) ]
+              (.table "nsfr_deriv_contracts")))
+          (.col "set_liab"))
+      , ("eff_gross_deriv_liab", .scalar (.ite (.binOp .eq (.var "deriv_contract_count") (.litRat 0 1))
+          (.unOp .nonNeg (.col "gross_deriv_liabilities"))
+          (.col "contract_deriv_liab")))
+      , ("eff_gross_deriv_assets", .scalar (.ite (.binOp .eq (.var "deriv_contract_count") (.litRat 0 1))
+          (.unOp .nonNeg (.col "gross_deriv_assets"))
+          (.col "contract_deriv_assets")))
       , ("eff_vm_received", .scalar (.ite (.var "cash_vm_eligibility_ok")
           (.unOp .nonNeg (.col "eligible_cash_vm_received")) (.litRat 0 1)))
       , ("nsfr_deriv_liab", .scalar (.unOp .nonNeg

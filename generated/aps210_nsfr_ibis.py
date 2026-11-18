@@ -6236,13 +6236,36 @@ def evaluate_nsfr(
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),
     )
-    mna_deriv_net = ibis.coalesce(
+    deriv_contract_count = ibis.coalesce(
+        (nsfr_deriv_contracts)
+        .aggregate(val=lambda t: (t["netting_set_id"]).count().cast("decimal(38, 12)"))[
+            "val"
+        ]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
+    contract_deriv_assets = ibis.coalesce(
         (
             (
-                ((nsfr_deriv_contracts).filter(lambda t: t["has_eligible_mna"]))
+                (nsfr_deriv_contracts)
                 .group_by(["netting_set_id"])
                 .aggregate(
-                    net_asset=lambda t: ibis.coalesce(
+                    all_elig=lambda t: ibis.coalesce(
+                        (t["has_eligible_mna"]).all(), ibis.literal(True)
+                    ),
+                    net_rc=lambda t: ibis.coalesce(
+                        (
+                            ibis.greatest(
+                                t["mtm_asset"], ibis.literal(0, type="decimal(38, 12)")
+                            )
+                            - ibis.greatest(
+                                t["mtm_liability"],
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            )
+                        ).sum(),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    ),
+                    pos_gross=lambda t: ibis.coalesce(
                         (
                             ibis.greatest(
                                 t["mtm_asset"], ibis.literal(0, type="decimal(38, 12)")
@@ -6250,7 +6273,41 @@ def evaluate_nsfr(
                         ).sum(),
                         ibis.literal(0, type="decimal(38, 12)"),
                     ),
-                    net_liab=lambda t: ibis.coalesce(
+                )
+            ).mutate(
+                set_asset=lambda t: ibis.ifelse(
+                    t["all_elig"],
+                    ibis.greatest(t["net_rc"], ibis.literal(0, type="decimal(38, 12)")),
+                    t["pos_gross"],
+                )
+            )
+        )
+        .aggregate(val=lambda t: (t["set_asset"]).sum())["val"]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
+    contract_deriv_liab = ibis.coalesce(
+        (
+            (
+                (nsfr_deriv_contracts)
+                .group_by(["netting_set_id"])
+                .aggregate(
+                    all_elig=lambda t: ibis.coalesce(
+                        (t["has_eligible_mna"]).all(), ibis.literal(True)
+                    ),
+                    net_rc=lambda t: ibis.coalesce(
+                        (
+                            ibis.greatest(
+                                t["mtm_asset"], ibis.literal(0, type="decimal(38, 12)")
+                            )
+                            - ibis.greatest(
+                                t["mtm_liability"],
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            )
+                        ).sum(),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    ),
+                    neg_gross=lambda t: ibis.coalesce(
                         (
                             ibis.greatest(
                                 t["mtm_liability"],
@@ -6261,79 +6318,30 @@ def evaluate_nsfr(
                     ),
                 )
             ).mutate(
-                pos_net_asset=lambda t: ibis.greatest(
-                    (t["net_asset"] - t["net_liab"]),
-                    ibis.literal(0, type="decimal(38, 12)"),
+                set_liab=lambda t: ibis.ifelse(
+                    t["all_elig"],
+                    ibis.greatest(
+                        (ibis.literal(0, type="decimal(38, 12)") - t["net_rc"]),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    ),
+                    t["neg_gross"],
                 )
             )
         )
-        .aggregate(val=lambda t: (t["pos_net_asset"]).sum())["val"]
+        .aggregate(val=lambda t: (t["set_liab"]).sum())["val"]
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),
     )
-    mna_deriv_net_liab = ibis.coalesce(
-        (
-            (
-                ((nsfr_deriv_contracts).filter(lambda t: t["has_eligible_mna"]))
-                .group_by(["netting_set_id"])
-                .aggregate(
-                    net_asset=lambda t: ibis.coalesce(
-                        (
-                            ibis.greatest(
-                                t["mtm_asset"], ibis.literal(0, type="decimal(38, 12)")
-                            )
-                        ).sum(),
-                        ibis.literal(0, type="decimal(38, 12)"),
-                    ),
-                    net_liab=lambda t: ibis.coalesce(
-                        (
-                            ibis.greatest(
-                                t["mtm_liability"],
-                                ibis.literal(0, type="decimal(38, 12)"),
-                            )
-                        ).sum(),
-                        ibis.literal(0, type="decimal(38, 12)"),
-                    ),
-                )
-            ).mutate(
-                pos_net_liab=lambda t: ibis.greatest(
-                    (t["net_liab"] - t["net_asset"]),
-                    ibis.literal(0, type="decimal(38, 12)"),
-                )
-            )
-        )
-        .aggregate(val=lambda t: (t["pos_net_liab"]).sum())["val"]
-        .as_scalar(),
-        ibis.literal(0, type="decimal(38, 12)"),
+    eff_gross_deriv_liab = ibis.ifelse(
+        (deriv_contract_count == ibis.literal(0, type="decimal(38, 12)")),
+        ibis.greatest(gross_deriv_liabilities, ibis.literal(0, type="decimal(38, 12)")),
+        contract_deriv_liab,
     )
-    gross_deriv_c_assets = ibis.coalesce(
-        ((nsfr_deriv_contracts).filter(lambda t: ~(t["has_eligible_mna"])))
-        .aggregate(
-            val=lambda t: (
-                ibis.greatest(t["mtm_asset"], ibis.literal(0, type="decimal(38, 12)"))
-            ).sum()
-        )["val"]
-        .as_scalar(),
-        ibis.literal(0, type="decimal(38, 12)"),
+    eff_gross_deriv_assets = ibis.ifelse(
+        (deriv_contract_count == ibis.literal(0, type="decimal(38, 12)")),
+        ibis.greatest(gross_deriv_assets, ibis.literal(0, type="decimal(38, 12)")),
+        contract_deriv_assets,
     )
-    gross_deriv_c_liab = ibis.coalesce(
-        ((nsfr_deriv_contracts).filter(lambda t: ~(t["has_eligible_mna"])))
-        .aggregate(
-            val=lambda t: (
-                ibis.greatest(
-                    t["mtm_liability"], ibis.literal(0, type="decimal(38, 12)")
-                )
-            ).sum()
-        )["val"]
-        .as_scalar(),
-        ibis.literal(0, type="decimal(38, 12)"),
-    )
-    eff_gross_deriv_liab = ibis.greatest(
-        gross_deriv_liabilities, ibis.literal(0, type="decimal(38, 12)")
-    ) + (mna_deriv_net_liab + gross_deriv_c_liab)
-    eff_gross_deriv_assets = ibis.greatest(
-        gross_deriv_assets, ibis.literal(0, type="decimal(38, 12)")
-    ) + (mna_deriv_net + gross_deriv_c_assets)
     eff_vm_received = ibis.ifelse(
         cash_vm_eligibility_ok,
         ibis.greatest(
