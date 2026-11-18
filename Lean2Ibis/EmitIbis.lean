@@ -15,6 +15,7 @@ def emitSExpr (tableVar? : Option String) : SExpr → String
   | .litBool b => if b then "ibis.literal(True)" else "ibis.literal(False)"
   | .litStr s => s!"ibis.literal(\"{s}\")"
   | .litDate y m d => s!"ibis.date({y}, {m}, {d})"
+  | .dateAddMonths d m => s!"({emitSExpr tableVar? d} + ibis.interval(months={m})).cast(\"date\")"
   | .unOp .not e => s!"(~({emitSExpr tableVar? e}))"
   | .unOp .nonNeg e => s!"ibis.greatest({emitSExpr tableVar? e}, ibis.literal(0, type=\"decimal(38, 12)\"))"
   | .unOp .abs e => s!"({emitSExpr tableVar? e}).abs()"
@@ -59,6 +60,7 @@ def emitAggCall (op : AggOp) (exprStr : String) : String :=
   | .max => s!"({exprStr}).max()"
   | .avg => s!"({exprStr}).mean().cast(\"decimal(38, 12)\")"
   | .count => s!"({exprStr}).count().cast(\"decimal(38, 12)\")"
+  | .countDistinct => s!"({exprStr}).nunique().cast(\"decimal(38, 12)\")"
   | .anyBool => s!"({exprStr}).any()"
   | .allBool => s!"({exprStr}).all()"
   | .rowNumber => "ibis.row_number()"
@@ -81,9 +83,12 @@ def emitWindowSpec (spec : WindowSpec) : String :=
   let framePart :=
     if spec.orderBy.isEmpty then []
     else
-      let prec := match spec.preceding? with | none => "None" | some p => toString p
-      let foll := match spec.following? with | none => "None" | some f => toString f
-      [s!"preceding={prec}", s!"following={foll}"]
+      match spec.precedingDays? with
+      | some pd => [s!"preceding=ibis.interval(days={pd})", "following=0"]
+      | none =>
+        let prec := match spec.preceding? with | none => "None" | some p => toString p
+        let foll := match spec.following? with | none => "None" | some f => toString f
+        [s!"preceding={prec}", s!"following={foll}"]
   s!"ibis.window({String.intercalate ", " (gbPart ++ obPart ++ framePart)})"
 
 /-- Emit a `RelExpr` as a deterministic Python/Ibis table pipeline. -/

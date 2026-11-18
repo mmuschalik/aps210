@@ -64,7 +64,7 @@ def evaluateLcr
   let retailDeposits := if isAudOnly then input.retailDeposits.filter (·.currency == .aud) else input.retailDeposits
   let otherOutflows := if isAudOnly then input.otherOutflows.filter (·.currency == .aud) else input.otherOutflows
   let inflows := if isAudOnly then input.inflows.filter (·.currency == .aud) else input.inflows
-  let legUnwind := computeUnwindAdjustments input.sftUnwindLegs
+  let legUnwind := computeUnwindAdjustments input.sftUnwindLegs isAudOnly
   let totalUnwind : HqlaUnwindAdjustments :=
     { deltaHqla1 := input.unwind.deltaHqla1 + legUnwind.deltaHqla1
       deltaHqla2a := input.unwind.deltaHqla2a + legUnwind.deltaHqla2a

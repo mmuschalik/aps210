@@ -92,10 +92,10 @@ def main() -> int:
     # Percentages in APS 210 prose ("X per cent" and spelled-out)
     spelled_map = {"zero": 0, "five": 5, "nine": 9}
     std_pcts: set[int] = set()
-    for m in re.finditer(r"\b(\d+)\s+per\s*cent\b", body, re.I):
+    for m in re.finditer(r"\b(\d+)\s+per\s*cent\b", body, re.IGNORECASE):
         std_pcts.add(int(m.group(1)))
     for word, val in spelled_map.items():
-        if re.search(rf"\b{word}\s+per\s*cent\b", body, re.I):
+        if re.search(rf"\b{word}\s+per\s*cent\b", body, re.IGNORECASE):
             std_pcts.add(val)
 
     # Table-only rates in APS 210 (Attachment A Table 3 & Attachment C Table 1)
@@ -103,7 +103,7 @@ def main() -> int:
         (1, r"Unconditionally revocable credit and liquidity facilities"),
         (30, r"30\s+liquidity facilities"),
     ]:
-        if re.search(anchor, body, re.I):
+        if re.search(anchor, body, re.IGNORECASE):
             std_pcts.add(table_rate)
 
     print("=== 1. PERCENTAGE CONSTANTS (APS 210 vs Lean `pct N`) ===")

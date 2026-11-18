@@ -106,6 +106,8 @@ private def parseAmortCashflow (j : Json) : Except String AmortisationCashflowRo
 private def parseSftLeg (j : Json) : Except String SftLegRow := do
   pure
     { legId := ← (← getField j "leg_id").getStr?
+    , currency := ← (← getField j "currency").getStr?
+    , residualDays := (← (← getField j "residual_days").getNat?)
     , meetsOperationalReqs := ← (← getField j "meets_operational_reqs").getBool?
     , nettingEligible := ← (← getField j "netting_eligible").getBool?
     , hqla1Delta := ← parseRat (← getField j "hqla1_delta")
@@ -129,6 +131,7 @@ private def parseArr {α : Type} (j : Json) (k : String) (f : Json → Except St
 private def parseInput (j : Json) : Except String UpstreamInput := do
   pure
     { reportingDate := ← parseDate (← getField j "reporting_date")
+    , isAudOnly := ← (← getField j "is_aud_only").getBool?
     , positions := ← parseArr j "positions" parsePosition
     , derivativeTrades := ← parseArr j "derivative_trades" parseDerivative
     , depositAccounts := ← parseArr j "deposit_accounts" parseDeposit
@@ -144,8 +147,14 @@ private def parseInput (j : Json) : Except String UpstreamInput := do
 private def ratToJson (r : Rat) : Json :=
   Json.str s!"{r.num}/{r.den}"
 
+private def valToJson : Val → Json
+  | .rat r => ratToJson r
+  | .bool b => Json.bool b
+  | .str s => Json.str s
+  | .date d => Json.num d
+
 private def rowToJson (row : Row) : Json :=
-  Json.mkObj (row.map (fun (k, v) => (k, ratToJson v.asRat)))
+  Json.mkObj (row.map (fun (k, v) => (k, valToJson v)))
 
 def main (args : List String) : IO UInt32 := do
   let [path] := args | do

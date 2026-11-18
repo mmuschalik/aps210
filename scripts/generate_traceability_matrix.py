@@ -109,18 +109,18 @@ def find_enclosing_symbol(lines: list[str], idx: int) -> str:
 def expand_para_refs(line: str, default_sec: str) -> list[tuple[str, int]]:
     refs: list[tuple[str, int]] = []
     sec = default_sec
-    if re.search(r"Attachment\s+A", line, re.I):
+    if re.search(r"Attachment\s+A", line, re.IGNORECASE):
         sec = "Attachment A"
-    elif re.search(r"Attachment\s+B", line, re.I):
+    elif re.search(r"Attachment\s+B", line, re.IGNORECASE):
         sec = "Attachment B"
-    elif re.search(r"Attachment\s+C", line, re.I):
+    elif re.search(r"Attachment\s+C", line, re.IGNORECASE):
         sec = "Attachment C"
-    elif re.search(r"APS\s*210\s+(?:para|paragraph)", line, re.I):
+    elif re.search(r"APS\s*210\s+(?:para|paragraph)", line, re.IGNORECASE):
         sec = "Main Body"
 
     # Match ranges like "Paragraphs 15–20" or "paras 6-8" or single "para 25"
     for m in re.finditer(
-        r"(?:paragraphs?|paras?)\s+(\d+)(?:\s*[–-]\s*(\d+))?", line, re.I
+        r"(?:paragraphs?|paras?)\s+(\d+)(?:\s*[–-]\s*(\d+))?", line, re.IGNORECASE
     ):
         start = int(m.group(1))
         end = int(m.group(2)) if m.group(2) else start

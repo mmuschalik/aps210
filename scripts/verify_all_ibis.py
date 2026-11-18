@@ -1,10 +1,11 @@
 from decimal import Decimal
-import pandas as pd
-import ibis
-from generated.aps210_nsfr_ibis import evaluate_nsfr
-from generated.aps210_external_ibis import evaluate_external_rules
-from generated.aps210_compliance_ibis import evaluate_compliance_gate
 
+import ibis
+import pandas as pd
+
+from generated.aps210_compliance_ibis import evaluate_compliance_gate
+from generated.aps210_external_ibis import evaluate_external_rules
+from generated.aps210_nsfr_ibis import evaluate_nsfr
 
 ASF_SCHEMA = ibis.schema(
     {
@@ -44,8 +45,8 @@ def main():
     asf_tbl = ibis.memtable(
         pd.DataFrame(
             [
-                ("reg_cap_ex_t2_lt1y", Decimal("30"), Decimal("0"), False),
-                ("stable_retail_sme_lt1y", Decimal("100"), Decimal("0"), False),
+                ("reg_cap_ex_t2_lt1y", Decimal(30), Decimal(0), False),
+                ("stable_retail_sme_lt1y", Decimal(100), Decimal(0), False),
             ],
             columns=list(ASF_SCHEMA.names),
         ),
@@ -56,56 +57,56 @@ def main():
             [
                 (
                     "std_res_mortgage_lvr_le80_ge1y",
-                    Decimal("100"),
+                    Decimal(100),
                     "unencumbered",
-                    Decimal("0"),
+                    Decimal(0),
                     False,
                     False,
-                    Decimal("0"),
+                    Decimal(0),
                     False,
                     False,
                 ),
                 (
                     "unencumbered_hqla1_5pct",
-                    Decimal("20"),
+                    Decimal(20),
                     "unencumbered",
-                    Decimal("0"),
+                    Decimal(0),
                     False,
                     False,
-                    Decimal("0"),
+                    Decimal(0),
                     False,
                     False,
                 ),
                 (
                     "initial_margin_ccp_default",
-                    Decimal("50"),
+                    Decimal(50),
                     "one_year_or_more",
-                    Decimal("0"),
+                    Decimal(0),
                     True,
                     False,
-                    Decimal("0"),
+                    Decimal(0),
                     False,
                     False,
                 ),
                 (
                     "clf_third_party_or_host_ala",
-                    Decimal("15"),
+                    Decimal(15),
                     "unencumbered",
-                    Decimal("0"),
+                    Decimal(0),
                     False,
                     False,
-                    Decimal("0"),
+                    Decimal(0),
                     False,
                     False,
                 ),
                 (
                     "self_securitised_clf",
-                    Decimal("10"),
+                    Decimal(10),
                     "unencumbered",
-                    Decimal("0"),
+                    Decimal(0),
                     False,
                     False,
-                    Decimal("0"),
+                    Decimal(0),
                     False,
                     False,
                 ),
@@ -117,8 +118,8 @@ def main():
     obs_tbl = ibis.memtable(
         pd.DataFrame(
             [
-                ("irrev_or_cond_rev_facility", Decimal("100")),
-                ("uncond_rev_facility", Decimal("100")),
+                ("irrev_or_cond_rev_facility", Decimal(100)),
+                ("uncond_rev_facility", Decimal(100)),
             ],
             columns=list(OBS_SCHEMA.names),
         ),
@@ -132,16 +133,16 @@ def main():
             rsf_tbl,
             obs_tbl,
             required_min_rate=Decimal("1.00"),
-            gross_deriv_liabilities=Decimal("10"),
-            variation_margin_posted=Decimal("5"),
-            gross_deriv_assets=Decimal("8"),
-            eligible_cash_vm_received=Decimal("0"),
+            gross_deriv_liabilities=Decimal(10),
+            variation_margin_posted=Decimal(5),
+            gross_deriv_assets=Decimal(8),
+            eligible_cash_vm_received=Decimal(0),
             has_clf_limit=True,
-            recognised_clf_limit=Decimal("20"),
+            recognised_clf_limit=Decimal(20),
         ).items()
     }
-    assert Decimal(nsfr_res["total_asf"]) == Decimal("125"), nsfr_res
-    assert Decimal(nsfr_res["total_rsf"]) == Decimal("84"), nsfr_res
+    assert Decimal(nsfr_res["total_asf"]) == Decimal(125), nsfr_res
+    assert Decimal(nsfr_res["total_rsf"]) == Decimal(84), nsfr_res
     assert bool(nsfr_res["compliant"]) is True, nsfr_res
     print("PASS nsfr_clf_cap_and_derivatives:", nsfr_res)
 
@@ -155,16 +156,16 @@ def main():
             is_short_term_bank=False,
             to_natural_person=True,
             is_standard_loan_aps112=True,
-            lvr_pct=Decimal("75"),
+            lvr_pct=Decimal(75),
             residual_maturity_ge_1y=True,
-            days_past_due=Decimal("10"),
+            days_past_due=Decimal(10),
             unlikely_to_pay=False,
-            sme_business_exposure_aud=Decimal("1400000"),
+            sme_business_exposure_aud=Decimal(1400000),
         ).items()
     }
-    assert Decimal(ext_res["sovereign_rw_pct"]) == Decimal("0"), ext_res
-    assert Decimal(ext_res["domestic_pse_rw_pct"]) == Decimal("20"), ext_res
-    assert Decimal(ext_res["bank_rw_pct"]) == Decimal("20"), ext_res
+    assert Decimal(ext_res["sovereign_rw_pct"]) == Decimal(0), ext_res
+    assert Decimal(ext_res["domestic_pse_rw_pct"]) == Decimal(20), ext_res
+    assert Decimal(ext_res["bank_rw_pct"]) == Decimal(20), ext_res
     assert bool(ext_res["qualifies_65pct_res_mortgage"]) is True, ext_res
     assert bool(ext_res["is_performing_aps220"]) is True, ext_res
     assert bool(ext_res["qualifies_sme_aps113_para40"]) is True, ext_res
@@ -176,14 +177,14 @@ def main():
         for k, v in evaluate_compliance_gate(
             is_locally_incorporated=True,
             is_lcr_adi=True,
-            apra_higher_min_lcr_aud=Decimal("0"),
-            apra_higher_min_lcr_all=Decimal("0"),
-            apra_higher_min_mlh=Decimal("0"),
-            apra_higher_min_nsfr=Decimal("0"),
+            apra_higher_min_lcr_aud=Decimal(0),
+            apra_higher_min_lcr_all=Decimal(0),
+            apra_higher_min_mlh=Decimal(0),
+            apra_higher_min_nsfr=Decimal(0),
             base_governance_ok=True,
             stress_testing_ok=True,
             loc_assessed_annually=False,
-            loc_outage_min_days=Decimal("0"),
+            loc_outage_min_days=Decimal(0),
             in_financial_stress=False,
             notified_apra_immediately=False,
             lcr_aud_compliant=True,

@@ -70,12 +70,12 @@ def main() -> None:
             "id": "out1",
             "currency": "AUD",
             "direction": "outflow",
-            "amount": Decimal("60"),
-            "contractual_days": Decimal("5"),
+            "amount": Decimal(60),
+            "contractual_days": Decimal(5),
             "has_earliest_call": False,
-            "earliest_call_days": Decimal("0"),
+            "earliest_call_days": Decimal(0),
             "has_latest_extension": False,
-            "latest_extension_days": Decimal("0"),
+            "latest_extension_days": Decimal(0),
             "is_open_maturity": False,
             "is_minimum_contractual_payment": False,
             "is_non_financial_revenue": False,
@@ -87,12 +87,12 @@ def main() -> None:
             "id": "in1",
             "currency": "AUD",
             "direction": "inflow",
-            "amount": Decimal("40"),
-            "contractual_days": Decimal("20"),
+            "amount": Decimal(40),
+            "contractual_days": Decimal(20),
             "has_earliest_call": False,
-            "earliest_call_days": Decimal("0"),
+            "earliest_call_days": Decimal(0),
             "has_latest_extension": False,
-            "latest_extension_days": Decimal("0"),
+            "latest_extension_days": Decimal(0),
             "is_open_maturity": False,
             "is_minimum_contractual_payment": False,
             "is_non_financial_revenue": False,
@@ -104,12 +104,12 @@ def main() -> None:
             "id": "out2",
             "currency": "AUD",
             "direction": "outflow",
-            "amount": Decimal("50"),
-            "contractual_days": Decimal("90"),
+            "amount": Decimal(50),
+            "contractual_days": Decimal(90),
             "has_earliest_call": False,
-            "earliest_call_days": Decimal("0"),
+            "earliest_call_days": Decimal(0),
             "has_latest_extension": False,
-            "latest_extension_days": Decimal("0"),
+            "latest_extension_days": Decimal(0),
             "is_open_maturity": False,
             "is_minimum_contractual_payment": False,
             "is_non_financial_revenue": False,
@@ -122,12 +122,12 @@ def main() -> None:
             "id": "open-full",
             "currency": "AUD",
             "direction": "inflow",
-            "amount": Decimal("999"),
-            "contractual_days": Decimal("10"),
+            "amount": Decimal(999),
+            "contractual_days": Decimal(10),
             "has_earliest_call": False,
-            "earliest_call_days": Decimal("0"),
+            "earliest_call_days": Decimal(0),
             "has_latest_extension": False,
-            "latest_extension_days": Decimal("0"),
+            "latest_extension_days": Decimal(0),
             "is_open_maturity": True,
             "is_minimum_contractual_payment": False,
             "is_non_financial_revenue": False,
@@ -139,12 +139,12 @@ def main() -> None:
             "id": "ext-late",
             "currency": "AUD",
             "direction": "inflow",
-            "amount": Decimal("999"),
-            "contractual_days": Decimal("20"),
+            "amount": Decimal(999),
+            "contractual_days": Decimal(20),
             "has_earliest_call": False,
-            "earliest_call_days": Decimal("0"),
+            "earliest_call_days": Decimal(0),
             "has_latest_extension": True,
-            "latest_extension_days": Decimal("400"),
+            "latest_extension_days": Decimal(400),
             "is_open_maturity": False,
             "is_minimum_contractual_payment": False,
             "is_non_financial_revenue": False,
@@ -156,12 +156,12 @@ def main() -> None:
             "id": "hqla-in",
             "currency": "AUD",
             "direction": "inflow",
-            "amount": Decimal("999"),
-            "contractual_days": Decimal("10"),
+            "amount": Decimal(999),
+            "contractual_days": Decimal(10),
             "has_earliest_call": False,
-            "earliest_call_days": Decimal("0"),
+            "earliest_call_days": Decimal(0),
             "has_latest_extension": False,
-            "latest_extension_days": Decimal("0"),
+            "latest_extension_days": Decimal(0),
             "is_open_maturity": False,
             "is_minimum_contractual_payment": False,
             "is_non_financial_revenue": False,
@@ -178,48 +178,50 @@ def main() -> None:
             "currency": "AUD",
             "has_valid_mna": True,
             "is_same_day_fx_principal_exchange": False,
-            "payable": Decimal("80"),
-            "receivable": Decimal("30"),
-            "uncounted_hqla_collateral": Decimal("0"),
+            "payable": Decimal(80),
+            "receivable": Decimal(30),
+            "uncounted_hqla_collateral": Decimal(0),
         },
         {
             "counterparty": "cp2",
             "currency": "AUD",
             "has_valid_mna": False,
             "is_same_day_fx_principal_exchange": True,
-            "payable": Decimal("20"),
-            "receivable": Decimal("50"),
-            "uncounted_hqla_collateral": Decimal("0"),
+            "payable": Decimal(20),
+            "receivable": Decimal(50),
+            "uncounted_hqla_collateral": Decimal(0),
         },
     ]
     liab_rows = [
-        {"id": "l1", "amount": Decimal("100"), "days": Decimal("90")},
-        {"id": "l2", "amount": Decimal("200"), "days": Decimal("240")},
-        {"id": "l3", "amount": Decimal("300"), "days": Decimal("400")},
+        {"id": "l1", "amount": Decimal(100), "days": Decimal(90)},
+        {"id": "l2", "amount": Decimal(200), "days": Decimal(240)},
+        {"id": "l3", "amount": Decimal(300), "days": Decimal(400)},
     ]
     loan_rows = [
-        {"id": "a1", "amount": Decimal("100"), "days": Decimal("180")},
-        {"id": "a2", "amount": Decimal("400"), "days": Decimal("730")},
+        {"id": "a1", "amount": Decimal(100), "days": Decimal(180)},
+        {"id": "a2", "amount": Decimal(400), "days": Decimal(730)},
     ]
 
-    cf_tbl, d_tbl, liab_tbl, loan_tbl = make_tables(base_cf, deriv_rows, liab_rows, loan_rows)
+    cf_tbl, d_tbl, liab_tbl, loan_tbl = make_tables(
+        base_cf, deriv_rows, liab_rows, loan_rows
+    )
     exprs = evaluate_aps210_cashflows(
-        cf_tbl, d_tbl, liab_tbl, loan_tbl, Decimal("70"), False, "AUD"
+        cf_tbl, d_tbl, liab_tbl, loan_tbl, Decimal(70), False, "AUD"
     )
     actual = {k: con.execute(v) for k, v in exprs.items()}
     expected = {
-        "min_cum_net_cf": Decimal("-70"),
+        "min_cum_net_cf": Decimal(-70),
         "survival_buffer_met": True,
-        "sched_outflow_30d": Decimal("60"),
-        "spv_outflow_30d": Decimal("60"),
-        "sched_inflow_30d": Decimal("40"),
-        "lcr_deriv_outflow": Decimal("50"),
-        "lcr_deriv_inflow": Decimal("30"),
-        "nsfr_asf_lt6m": Decimal("100"),
-        "nsfr_asf_6m_to_1y": Decimal("200"),
-        "nsfr_asf_ge1y": Decimal("300"),
-        "nsfr_loan_lt1y": Decimal("100"),
-        "nsfr_loan_ge1y": Decimal("400"),
+        "sched_outflow_30d": Decimal(60),
+        "spv_outflow_30d": Decimal(60),
+        "sched_inflow_30d": Decimal(40),
+        "lcr_deriv_outflow": Decimal(50),
+        "lcr_deriv_inflow": Decimal(30),
+        "nsfr_asf_lt6m": Decimal(100),
+        "nsfr_asf_6m_to_1y": Decimal(200),
+        "nsfr_asf_ge1y": Decimal(300),
+        "nsfr_loan_lt1y": Decimal(100),
+        "nsfr_loan_ge1y": Decimal(400),
     }
     for k, exp in expected.items():
         act = actual[k]
@@ -234,20 +236,22 @@ def main() -> None:
         base_cf, deriv_rows, liab_rows, loan_rows
     )
     exprs_fail = evaluate_aps210_cashflows(
-        cf_tbl_fail, d_tbl_fail, liab_tbl_fail, loan_tbl_fail, Decimal("60"), False, "AUD"
+        cf_tbl_fail, d_tbl_fail, liab_tbl_fail, loan_tbl_fail, Decimal(60), False, "AUD"
     )
     actual_fail = {k: con.execute(v) for k, v in exprs_fail.items()}
-    assert Decimal(actual_fail["min_cum_net_cf"]) == Decimal("-70")
+    assert Decimal(actual_fail["min_cum_net_cf"]) == Decimal(-70)
     assert bool(actual_fail["survival_buffer_met"]) is False
     print("PASS cashflows_case2_buffer_60_fails:", actual_fail)
 
     # Case 3: ext-late (effective 400d > 30d) and hqla-in (countedInHqla=True) stay excluded from sched_inflow_30d
-    cf_tbl2, d_tbl2, liab_tbl2, loan_tbl2 = make_tables(cf_rows, deriv_rows, liab_rows, loan_rows)
+    cf_tbl2, d_tbl2, liab_tbl2, loan_tbl2 = make_tables(
+        cf_rows, deriv_rows, liab_rows, loan_rows
+    )
     exprs2 = evaluate_aps210_cashflows(
-        cf_tbl2, d_tbl2, liab_tbl2, loan_tbl2, Decimal("60"), False, "AUD"
+        cf_tbl2, d_tbl2, liab_tbl2, loan_tbl2, Decimal(60), False, "AUD"
     )
     actual2 = {k: con.execute(v) for k, v in exprs2.items()}
-    assert Decimal(actual2["sched_inflow_30d"]) == Decimal("40")
+    assert Decimal(actual2["sched_inflow_30d"]) == Decimal(40)
     print("PASS cashflows_case3_lcr_inflow_exclusions:", actual2)
 
 

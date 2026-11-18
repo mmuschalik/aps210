@@ -1,8 +1,9 @@
 from decimal import Decimal
-import pandas as pd
-import ibis
-from generated.aps210_lcr_ibis import evaluate_lcr
 
+import ibis
+import pandas as pd
+
+from generated.aps210_lcr_ibis import evaluate_lcr
 
 HQLA_SCHEMA = ibis.schema(
     {
@@ -91,7 +92,7 @@ def main():
             (
                 "hqla1",
                 "AUD",
-                Decimal("22"),
+                Decimal(22),
                 True,
                 True,
                 True,
@@ -105,7 +106,7 @@ def main():
             )
         ],
         retail=[],
-        outflows=[("non_op_other", "AUD", Decimal("100"), Decimal("0"))],
+        outflows=[("non_op_other", "AUD", Decimal(100), Decimal(0))],
         inflows=[],
     )
     res1 = {
@@ -118,15 +119,15 @@ def main():
             is_aud_only=False,
             is_level2=False,
             required_min_rate=Decimal("0.40"),
-            delta_hqla1=Decimal("0"),
-            delta_hqla2a=Decimal("0"),
-            delta_hqla2b=Decimal("0"),
-            clf_recognised=Decimal("0"),
-            foreign_ho_facility_eligible=Decimal("30"),
+            delta_hqla1=Decimal(0),
+            delta_hqla2a=Decimal(0),
+            delta_hqla2b=Decimal(0),
+            clf_recognised=Decimal(0),
+            foreign_ho_facility_eligible=Decimal(30),
         ).items()
     }
-    assert Decimal(res1["ho_facility_recognised"]) == Decimal("20"), res1
-    assert Decimal(res1["lcr_numerator"]) == Decimal("42"), res1
+    assert Decimal(res1["ho_facility_recognised"]) == Decimal(20), res1
+    assert Decimal(res1["lcr_numerator"]) == Decimal(42), res1
     assert bool(res1["compliant"]) is True, res1
     print("PASS lcr_foreign_adi_ho_facility:", res1)
 
@@ -137,7 +138,7 @@ def main():
             (
                 "hqla1",
                 "AUD",
-                Decimal("50"),
+                Decimal(50),
                 True,
                 True,
                 True,
@@ -152,7 +153,7 @@ def main():
             (
                 "hqla2a",
                 "AUD",
-                Decimal("20"),
+                Decimal(20),
                 True,
                 True,
                 True,
@@ -167,7 +168,7 @@ def main():
             (
                 "hqla1",
                 "USD",
-                Decimal("1000"),
+                Decimal(1000),
                 True,
                 True,
                 True,
@@ -184,14 +185,14 @@ def main():
             # Stable retail: 100 * 5% = 5
             (
                 "AUD",
-                Decimal("100"),
+                Decimal(100),
                 False,
                 True,
                 False,
                 False,
                 False,
                 False,
-                Decimal("0"),
+                Decimal(0),
                 True,
                 False,
                 False,
@@ -201,14 +202,14 @@ def main():
             # Less stable scorecard >= 3 (online +2, >250k +2 = 4): 100 * 25% = 25
             (
                 "AUD",
-                Decimal("100"),
+                Decimal(100),
                 False,
                 True,
                 False,
                 False,
                 False,
                 False,
-                Decimal("0"),
+                Decimal(0),
                 False,
                 True,
                 True,
@@ -220,14 +221,14 @@ def main():
             (
                 "committed_liquidity_non_fin_corp_sov_cb_pse",
                 "AUD",
-                Decimal("100"),
-                Decimal("0"),
+                Decimal(100),
+                Decimal(0),
             ),  # 30
-            ("non_op_other", "USD", Decimal("500"), Decimal("0")),  # filtered out
+            ("non_op_other", "USD", Decimal(500), Decimal(0)),  # filtered out
         ],
         inflows=[
             # 100 * 100% = 100 gross inflow -> capped at 75% of (5 + 25 + 30 = 60) = 45
-            ("fi_and_central_bank", "AUD", Decimal("100"), True, False),
+            ("fi_and_central_bank", "AUD", Decimal(100), True, False),
         ],
     )
     res2 = {
@@ -240,18 +241,18 @@ def main():
             is_aud_only=True,
             is_level2=False,
             required_min_rate=Decimal("1.00"),
-            delta_hqla1=Decimal("0"),
-            delta_hqla2a=Decimal("0"),
-            delta_hqla2b=Decimal("0"),
-            clf_recognised=Decimal("0"),
-            foreign_ho_facility_eligible=Decimal("0"),
+            delta_hqla1=Decimal(0),
+            delta_hqla2a=Decimal(0),
+            delta_hqla2b=Decimal(0),
+            clf_recognised=Decimal(0),
+            foreign_ho_facility_eligible=Decimal(0),
         ).items()
     }
     # Stock = 50 + 17 = 67; Gross outflows = 60; Capped inflows = 45; Net outflows = 15; 67 >= 15 -> compliant
-    assert Decimal(res2["stock_of_hqla"]) == Decimal("67"), res2
-    assert Decimal(res2["gross_outflows"]) == Decimal("60"), res2
-    assert Decimal(res2["capped_inflows"]) == Decimal("45"), res2
-    assert Decimal(res2["net_cash_outflows"]) == Decimal("15"), res2
+    assert Decimal(res2["stock_of_hqla"]) == Decimal(67), res2
+    assert Decimal(res2["gross_outflows"]) == Decimal(60), res2
+    assert Decimal(res2["capped_inflows"]) == Decimal(45), res2
+    assert Decimal(res2["net_cash_outflows"]) == Decimal(15), res2
     assert bool(res2["compliant"]) is True, res2
     print("PASS lcr_aud_scorecard_and_75pct_cap:", res2)
 

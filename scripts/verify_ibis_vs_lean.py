@@ -1,6 +1,8 @@
 from decimal import Decimal
-import pandas as pd
+
 import ibis
+import pandas as pd
+
 from generated.aps210_mlh_ibis import evaluate_mlh
 
 
@@ -68,7 +70,7 @@ def main():
         assets=[
             (
                 "commonwealth_and_semi_govt_securities",
-                Decimal("8"),
+                Decimal(8),
                 True,
                 True,
                 True,
@@ -77,7 +79,7 @@ def main():
             ),
             (
                 "net_deposits_with_other_adis_two_business_days",
-                Decimal("5"),
+                Decimal(5),
                 True,
                 True,
                 True,
@@ -86,7 +88,7 @@ def main():
             ),
             (
                 "adi_bank_bills_cds_and_debt",
-                Decimal("10"),
+                Decimal(10),
                 True,
                 False,
                 True,
@@ -95,15 +97,15 @@ def main():
             ),
         ],
         liabilities=[
-            (True, False, Decimal("100")),
-            (True, True, Decimal("50")),  # APRA-excluded
+            (True, False, Decimal(100)),
+            (True, True, Decimal(50)),  # APRA-excluded
         ],
-        placements=Decimal("3"),
+        placements=Decimal(3),
         min_rate=Decimal("0.09"),
         trigger_ratio=Decimal("0.10"),
         expected={
-            "eligible_liquid_assets": Decimal("10"),
-            "total_liabilities": Decimal("100"),
+            "eligible_liquid_assets": Decimal(10),
+            "total_liabilities": Decimal(100),
             "compliant": True,
             "trigger_ratio_valid": True,
             "above_trigger_ratio": True,
@@ -117,7 +119,7 @@ def main():
         assets=[
             (
                 "notes_and_coin_and_settlement_funds",
-                Decimal("8"),
+                Decimal(8),
                 True,
                 False,
                 False,
@@ -126,7 +128,7 @@ def main():
             ),
             (
                 "net_deposits_with_other_adis_two_business_days",
-                Decimal("2"),
+                Decimal(2),
                 True,
                 True,
                 True,
@@ -134,13 +136,13 @@ def main():
                 True,
             ),
         ],
-        liabilities=[(True, False, Decimal("100"))],
-        placements=Decimal("5"),
+        liabilities=[(True, False, Decimal(100))],
+        placements=Decimal(5),
         min_rate=Decimal("0.09"),
         trigger_ratio=Decimal("0.10"),
         expected={
-            "eligible_liquid_assets": Decimal("8"),
-            "total_liabilities": Decimal("100"),
+            "eligible_liquid_assets": Decimal(8),
+            "total_liabilities": Decimal(100),
             "compliant": False,
             "trigger_ratio_valid": True,
             "above_trigger_ratio": False,
@@ -153,12 +155,12 @@ def main():
         "zero_liabilities",
         assets=[],
         liabilities=[],
-        placements=Decimal("0"),
+        placements=Decimal(0),
         min_rate=Decimal("0.09"),
         trigger_ratio=Decimal("0.10"),
         expected={
-            "eligible_liquid_assets": Decimal("0"),
-            "total_liabilities": Decimal("0"),
+            "eligible_liquid_assets": Decimal(0),
+            "total_liabilities": Decimal(0),
             "compliant": True,
             "trigger_ratio_valid": True,
             "above_trigger_ratio": True,

@@ -220,6 +220,10 @@ def HqlaAsset.valueAfterHaircut (basis : ConsolidationBasis) (a : HqlaAsset) : M
 /-- Attachment A, Paragraph 8: Raw short-term (<= 30 calendar days) SFT or collateral swap leg
     for computing unwind adjustments to HQLA1, HQLA2A, and HQLA2B. -/
 structure ShortTermSftLeg where
+  /-- Currency of the SFT/collateral swap leg (needed for AUD-only LCR filtering). -/
+  currency : Currency := .aud
+  /-- Residual maturity in calendar days (must be <= 30 days to enter LCR unwind). -/
+  residualMaturityDays : Nat := 30
   /-- Post-haircut HQLA value of the cash/security leg received or delivered.
       Positive = asset returned to ADI upon unwind; negative = asset delivered by ADI upon unwind. -/
   hqla1Delta : Rat := 0
@@ -244,9 +248,11 @@ private def applySftNetting (leg : ShortTermSftLeg) (d : Rat) : Rat :=
     | none => true
   if netOk then d else min d 0
 
-/-- Derive `HqlaUnwindAdjustments` from individual <= 30-day SFT / collateral swap legs. -/
-def computeUnwindAdjustments (legs : List ShortTermSftLeg) : HqlaUnwindAdjustments :=
-  let active := legs.filter (·.meetsOperationalReqs)
+/-- Derive `HqlaUnwindAdjustments` from individual <= 30-day SFT / collateral swap legs,
+    enforcing operational requirements, <= 30-day horizon, and AUD filtering when `isAudOnly = true`. -/
+def computeUnwindAdjustments (legs : List ShortTermSftLeg) (isAudOnly : Bool := false) : HqlaUnwindAdjustments :=
+  let active := legs.filter (fun l =>
+    l.meetsOperationalReqs && l.residualMaturityDays ≤ 30 && (!isAudOnly || l.currency == .aud))
   { deltaHqla1 := sumBy active (fun l => applySftNetting l l.hqla1Delta)
     deltaHqla2a := sumBy active (fun l => applySftNetting l l.hqla2aDelta)
     deltaHqla2b := sumBy active (fun l => applySftNetting l l.hqla2bDelta) }

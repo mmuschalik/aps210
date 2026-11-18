@@ -1,4 +1,5 @@
 from decimal import Decimal
+
 import duckdb
 import pandas as pd
 
@@ -14,7 +15,7 @@ def main():
             [
                 (
                     "commonwealth_and_semi_govt_securities",
-                    Decimal("8"),
+                    Decimal(8),
                     True,
                     True,
                     True,
@@ -23,7 +24,7 @@ def main():
                 ),
                 (
                     "net_deposits_with_other_adis_two_business_days",
-                    Decimal("5"),
+                    Decimal(5),
                     True,
                     True,
                     True,
@@ -32,7 +33,7 @@ def main():
                 ),
                 (
                     "adi_bank_bills_cds_and_debt",
-                    Decimal("10"),
+                    Decimal(10),
                     True,
                     False,
                     True,
@@ -55,8 +56,8 @@ def main():
         "liabilities",
         pd.DataFrame(
             [
-                (True, False, Decimal("100")),
-                (True, True, Decimal("50")),
+                (True, False, Decimal(100)),
+                (True, True, Decimal(50)),
             ],
             columns=[
                 "is_on_balance_sheet_or_irrevocable",
@@ -72,7 +73,7 @@ def main():
         .replace(":required_min_rate", "$required_min_rate")
         .replace(":trigger_ratio", "$trigger_ratio"),
         {
-            "placements_by_other_adis": Decimal("3"),
+            "placements_by_other_adis": Decimal(3),
             "required_min_rate": Decimal("0.09"),
             "trigger_ratio": Decimal("0.10"),
         },
@@ -86,8 +87,8 @@ def main():
         "above_trigger_ratio",
     ]
     res = dict(zip(cols, row))
-    assert res["eligible_liquid_assets"] == Decimal("10"), res
-    assert res["total_liabilities"] == Decimal("100"), res
+    assert res["eligible_liquid_assets"] == Decimal(10), res
+    assert res["total_liabilities"] == Decimal(100), res
     assert res["compliant"] is True, res
     assert res["trigger_ratio_valid"] is True, res
     assert res["above_trigger_ratio"] is True, res

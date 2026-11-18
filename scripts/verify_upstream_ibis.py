@@ -23,7 +23,7 @@ def main() -> None:
             # p2: matures 2027-07-15, but earliest_call_date 2026-09-01 (63d) with has_call_option=True -> NSFR <6m
             # p3: matures 2027-01-15 (199d -> 6m..1y), encumbered until 2027-08-01 (397d >= 365d)
             # p4: matures 2026-07-05 (5d), but notice_days=400 -> max(400, 5)=400d -> NSFR >=1y
-            "amount": [Decimal("100"), Decimal("200"), Decimal("300"), Decimal("400")],
+            "amount": [Decimal(100), Decimal(200), Decimal(300), Decimal(400)],
             "maturity_date": [
                 datetime.date(2026, 7, 15),
                 datetime.date(2027, 7, 15),
@@ -44,7 +44,7 @@ def main() -> None:
                 datetime.date(2026, 7, 5),
             ],
             "has_extension_option": [False, False, False, False],
-            "notice_days": [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("400")],
+            "notice_days": [Decimal(0), Decimal(0), Decimal(0), Decimal(400)],
             "encumbrance_end_date": [
                 datetime.date(2026, 6, 30),
                 datetime.date(2026, 6, 30),
@@ -64,8 +64,8 @@ def main() -> None:
             "trade_id": ["t1", "t2", "t3", "t4"],
             "mna_id": ["mna1", "mna1", "mna2", "none"],
             "has_eligible_mna": [True, True, True, False],
-            "mtm_payable": [Decimal("100"), Decimal("20"), Decimal("10"), Decimal("25")],
-            "mtm_receivable": [Decimal("40"), Decimal("50"), Decimal("60"), Decimal("10")],
+            "mtm_payable": [Decimal(100), Decimal(20), Decimal(10), Decimal(25)],
+            "mtm_receivable": [Decimal(40), Decimal(50), Decimal(60), Decimal(10)],
         }
     )
 
@@ -80,9 +80,14 @@ def main() -> None:
             "customer_group_id": ["cg1", "cg1", "cg2", "cg3"],
             "customer_type": ["retail", "retail", "sme", "sme"],
             "product_category": ["prodA", "prodA", "prodB", "prodB"],
-            "balance": [Decimal("200000"), Decimal("300000"), Decimal("1500000"), Decimal("2500000")],
+            "balance": [
+                Decimal(200000),
+                Decimal(300000),
+                Decimal(1500000),
+                Decimal(2500000),
+            ],
             "has_early_withdrawal_no_penalty": [True, False, False, False],
-            "residual_days": [Decimal("10"), Decimal("60"), Decimal("60"), Decimal("90")],
+            "residual_days": [Decimal(10), Decimal(60), Decimal(60), Decimal(90)],
         }
     )
 
@@ -93,15 +98,23 @@ def main() -> None:
     ccy_hqla1_positions = ibis.memtable(
         {
             "currency": ["USD", "USD", "EUR", "JPY"],
-            "hqla1_foreign_sov_amt": [Decimal("120"), Decimal("30"), Decimal("40"), Decimal("50")],
-            "ccy_net_outflow": [Decimal("60"), Decimal("40"), Decimal("80"), Decimal("-10")],
+            "hqla1_foreign_sov_amt": [
+                Decimal(120),
+                Decimal(30),
+                Decimal(40),
+                Decimal(50),
+            ],
+            "ccy_net_outflow": [Decimal(60), Decimal(40), Decimal(80), Decimal(-10)],
         }
     )
 
-    # 5. Daily collateral flows (rolling 30d window): days 1..35
-    # Days 1..30: +1 each (sum=30); Days 31..35: -20 each -> at day 35: 25*1 + 5*(-20) = -75 -> abs=75
-    flow_dates = [datetime.date(2026, 1, 1) + datetime.timedelta(days=i) for i in range(35)]
-    flow_vals = [Decimal("1") if i < 30 else Decimal("-20") for i in range(35)]
+    # 5. Daily collateral flows (calendar 30d window + 24m lookback coverage)
+    flow_dates = [datetime.date(2024, 6, 30)] + [
+        datetime.date(2026, 1, 1) + datetime.timedelta(days=i) for i in range(35)
+    ]
+    flow_vals = [Decimal(0)] + [
+        Decimal(1) if i < 30 else Decimal(-20) for i in range(35)
+    ]
     daily_collateral_flows = ibis.memtable(
         {"valuation_date": flow_dates, "net_collateral_flow": flow_vals}
     )
@@ -123,7 +136,15 @@ def main() -> None:
     ecai_assessments = ibis.memtable(
         {
             "exposure_id": ["e1", "e2", "e2", "e3", "e3", "e3", "e4"],
-            "rating_str": ["A+", "AAA", "BBB-", "AA+", "A", "below_bbb_minus", "unrated"],
+            "rating_str": [
+                "A+",
+                "AAA",
+                "BBB-",
+                "AA+",
+                "A",
+                "below_bbb_minus",
+                "unrated",
+            ],
         }
     )
 
@@ -136,19 +157,21 @@ def main() -> None:
                 datetime.date(2027, 3, 1),
                 datetime.date(2028, 6, 30),
             ],
-            "principal_amount": [Decimal("50"), Decimal("75"), Decimal("125")],
+            "principal_amount": [Decimal(50), Decimal(75), Decimal(125)],
         }
     )
 
-    # 9. SFT unwinds & 3-way CLF bound
+    # 9. SFT unwinds (currency + <=30d horizon filtering) & 3-way CLF bound
     sft_legs = ibis.memtable(
         {
-            "leg_id": ["s1", "s2", "s3"],
-            "meets_operational_reqs": [True, True, False],
-            "netting_eligible": [True, False, True],
-            "hqla1_delta": [Decimal("20"), Decimal("15"), Decimal("100")],
-            "hqla2a_delta": [Decimal("-5"), Decimal("-10"), Decimal("0")],
-            "hqla2b_delta": [Decimal("0"), Decimal("3"), Decimal("0")],
+            "leg_id": ["s1", "s2", "s3", "s4"],
+            "currency": ["AUD", "AUD", "AUD", "USD"],
+            "residual_days": [Decimal(14), Decimal(30), Decimal(10), Decimal(15)],
+            "meets_operational_reqs": [True, True, False, True],
+            "netting_eligible": [True, False, True, True],
+            "hqla1_delta": [Decimal(20), Decimal(15), Decimal(100), Decimal(50)],
+            "hqla2a_delta": [Decimal(-5), Decimal(-10), Decimal(0), Decimal(0)],
+            "hqla2b_delta": [Decimal(0), Decimal(3), Decimal(0), Decimal(0)],
         }
     )
 
@@ -163,37 +186,43 @@ def main() -> None:
         amortisation_cashflows,
         sft_legs,
         reporting_date,
+        False,
         True,
-        Decimal("500"),
-        Decimal("80"),
-        Decimal("20"),
-        Decimal("460"),
+        Decimal(500),
+        Decimal(80),
+        Decimal(20),
+        Decimal(460),
     )
 
-    results = {k: Decimal(str(con.execute(v))) for k, v in exprs.items()}
+    results = {}
+    for k, v in exprs.items():
+        val = con.execute(v)
+        results[k] = bool(val) if isinstance(val, bool) else Decimal(str(val))
     expected = {
-        "pos_lcr_within_30d_amt": Decimal("100"),
-        "pos_nsfr_lt_6m_amt": Decimal("300"),
-        "pos_nsfr_6m_to_1y_amt": Decimal("300"),
-        "pos_nsfr_ge_1y_amt": Decimal("400"),
-        "pos_enc_ge_1y_amt": Decimal("300"),
-        "deriv_net_outflow": Decimal("55"),
-        "deriv_net_inflow": Decimal("60"),
-        "sme_eligible_deposits": Decimal("1500000"),
-        "fcs_insured_deposits": Decimal("500000"),
-        "excluded_term_deposits": Decimal("4000000"),
-        "capped_foreign_sov_hqla1": Decimal("140"),
-        "max_30d_collateral_outflow": Decimal("75"),
-        "avg_12m_net_outflow": Decimal("155"),
-        "ecai_resolved_grade_sum": Decimal("7"),
-        "ecai_investment_grade_count": Decimal("3"),
-        "amort_nsfr_lt_6m_amt": Decimal("50"),
-        "amort_nsfr_6m_to_1y_amt": Decimal("75"),
-        "amort_nsfr_ge_1y_amt": Decimal("125"),
-        "sft_unwind_hqla1": Decimal("20"),
-        "sft_unwind_hqla2a": Decimal("-15"),
-        "sft_unwind_hqla2b": Decimal("0"),
-        "clf_recognised_amount": Decimal("440"),
+        "pos_lcr_within_30d_amt": Decimal(100),
+        "pos_nsfr_lt_6m_amt": Decimal(300),
+        "pos_nsfr_6m_to_1y_amt": Decimal(300),
+        "pos_nsfr_ge_1y_amt": Decimal(400),
+        "pos_enc_ge_1y_amt": Decimal(300),
+        "deriv_net_outflow": Decimal(55),
+        "deriv_net_inflow": Decimal(60),
+        "sme_eligible_deposits": Decimal(1500000),
+        "fcs_insured_deposits": Decimal(500000),
+        "excluded_term_deposits": Decimal(4000000),
+        "capped_foreign_sov_hqla1": Decimal(140),
+        "max_30d_collateral_outflow": Decimal(75),
+        "collateral_lookback_valid": True,
+        "avg_12m_net_outflow": Decimal(155),
+        "avg_12m_valid": True,
+        "ecai_resolved_grade_sum": Decimal(7),
+        "ecai_investment_grade_count": Decimal(3),
+        "amort_nsfr_lt_6m_amt": Decimal(50),
+        "amort_nsfr_6m_to_1y_amt": Decimal(75),
+        "amort_nsfr_ge_1y_amt": Decimal(125),
+        "sft_unwind_hqla1": Decimal(70),
+        "sft_unwind_hqla2a": Decimal(-15),
+        "sft_unwind_hqla2b": Decimal(0),
+        "clf_recognised_amount": Decimal(440),
     }
 
     for k, exp in expected.items():

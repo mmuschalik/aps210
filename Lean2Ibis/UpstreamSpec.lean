@@ -87,15 +87,36 @@ def foreignSovCappedByCcyRel : RelExpr :=
       (.table "ccy_hqla1_positions"))
 
 def collateralRolling30dRel : RelExpr :=
+  let inLookback :=
+    .filter
+      (.binOp .and
+        (.binOp .ge (.binOp .dateDiff (.col "valuation_date") (.dateAddMonths (.var "reporting_date") (-24))) (.litRat 0 1))
+        (.binOp .le (.binOp .dateDiff (.col "valuation_date") (.var "reporting_date")) (.litRat 0 1)))
+      (.table "daily_collateral_flows")
   .withColumns
     [ ("abs_30d_flow", .unOp .abs (.col "rolling_30d_flow")) ]
     (.window
       [ ("rolling_30d_flow", .sum, .col "net_collateral_flow",
           { partitionBy := []
           , orderBy := [("valuation_date", true)]
-          , preceding? := some 29
-          , following? := some 0 }) ]
+          , precedingDays? := some 29 }) ]
+      inLookback)
+
+def collateralLookbackInWindowRel : RelExpr :=
+  .withColumns
+    [ ("days_after_23m_anchor", .binOp .dateDiff (.col "valuation_date") (.dateAddMonths (.var "reporting_date") (-23))) ]
+    (.filter
+      (.binOp .and
+        (.binOp .ge (.binOp .dateDiff (.col "valuation_date") (.dateAddMonths (.var "reporting_date") (-24))) (.litRat 0 1))
+        (.binOp .le (.binOp .dateDiff (.col "valuation_date") (.var "reporting_date")) (.litRat 0 1)))
       (.table "daily_collateral_flows"))
+
+def monthly12mWindowRel : RelExpr :=
+  .filter
+    (.binOp .and
+      (.binOp .gt (.binOp .dateDiff (.col "month_end_date") (.dateAddMonths (.var "reporting_date") (-12))) (.litRat 0 1))
+      (.binOp .le (.binOp .dateDiff (.col "month_end_date") (.var "reporting_date")) (.litRat 0 1)))
+    (.table "monthly_net_outflows")
 
 def ecaiGradeRankExpr : SExpr :=
   .caseStr (.col "rating_str")
@@ -144,7 +165,13 @@ def sftLegsAdjustedRel : RelExpr :=
     , ("adj_hqla2a", netAdj "hqla2a_delta")
     , ("adj_hqla2b", netAdj "hqla2b_delta")
     ]
-    (.filter (.col "meets_operational_reqs") (.table "sft_legs"))
+    (.filter
+      (.binOp .and
+        (.col "meets_operational_reqs")
+        (.binOp .and
+          (.binOp .le (.col "residual_days") (.litRat 30 1))
+          (.binOp .or (.unOp .not (.var "is_aud_only")) (.binOp .eq (.col "currency") (.litStr "AUD")))))
+      (.table "sft_legs"))
 
 def clfRecognisedExpr : SExpr :=
   let boundA := .unOp .nonNeg (.var "clf_contractual")
@@ -169,10 +196,11 @@ def upstreamProgram : Program :=
       , ("monthly_net_outflows", ["month_end_date", "net_cash_outflow"])
       , ("ecai_assessments", ["exposure_id", "rating_str"])
       , ("amortisation_cashflows", ["loan_id", "payment_date", "principal_amount"])
-      , ("sft_legs", ["leg_id", "meets_operational_reqs", "netting_eligible", "hqla1_delta", "hqla2a_delta", "hqla2b_delta"])
+      , ("sft_legs", ["leg_id", "currency", "residual_days", "meets_operational_reqs", "netting_eligible", "hqla1_delta", "hqla2a_delta", "hqla2b_delta"])
       ]
   , scalarParams :=
       [ ("reporting_date", .date)
+      , ("is_aud_only", .bool)
       , ("clf_eligible", .bool)
       , ("clf_contractual", .rat)
       , ("clf_pledged_zero_runoff", .rat)
@@ -180,25 +208,27 @@ def upstreamProgram : Program :=
       , ("clf_collateral_after_margin", .rat)
       ]
   , lets :=
-      [ ("pos_lcr_within_30d_amt",
+      [ ("six_months_days", .scalar (.binOp .dateDiff (.dateAddMonths (.var "reporting_date") 6) (.var "reporting_date")))
+      , ("one_year_days", .scalar (.binOp .dateDiff (.dateAddMonths (.var "reporting_date") 12) (.var "reporting_date")))
+      , ("pos_lcr_within_30d_amt",
           .agg .sum
             (.filter (.binOp .le (.col "residual_days") (.litRat 30 1)) positionsEnrichedRel)
             (.col "amount"))
       , ("pos_nsfr_lt_6m_amt",
           .agg .sum
-            (.filter (.binOp .lt (.col "residual_days") (.litRat 180 1)) positionsEnrichedRel)
+            (.filter (.binOp .lt (.col "residual_days") (.var "six_months_days")) positionsEnrichedRel)
             (.col "amount"))
       , ("pos_nsfr_6m_to_1y_amt",
           .agg .sum
             (.filter
               (.binOp .and
-                (.binOp .ge (.col "residual_days") (.litRat 180 1))
-                (.binOp .lt (.col "residual_days") (.litRat 365 1)))
+                (.binOp .ge (.col "residual_days") (.var "six_months_days"))
+                (.binOp .lt (.col "residual_days") (.var "one_year_days")))
               positionsEnrichedRel)
             (.col "amount"))
       , ("pos_nsfr_ge_1y_amt",
           .agg .sum
-            (.filter (.binOp .ge (.col "residual_days") (.litRat 365 1)) positionsEnrichedRel)
+            (.filter (.binOp .ge (.col "residual_days") (.var "one_year_days")) positionsEnrichedRel)
             (.col "amount"))
       , ("pos_enc_ge_1y_amt",
           .agg .sum
@@ -222,27 +252,39 @@ def upstreamProgram : Program :=
           .agg .sum foreignSovCappedByCcyRel (.col "capped_hqla1"))
       , ("max_30d_collateral_outflow",
           .agg .max collateralRolling30dRel (.col "abs_30d_flow"))
+      , ("collat_cnt",
+          .agg .count collateralLookbackInWindowRel (.col "valuation_date"))
+      , ("collat_min_after_23m",
+          .agg .min collateralLookbackInWindowRel (.col "days_after_23m_anchor"))
+      , ("collateral_lookback_valid",
+          .scalar (.binOp .and (.binOp .gt (.var "collat_cnt") (.litRat 0 1)) (.binOp .le (.var "collat_min_after_23m") (.litRat 0 1))))
       , ("avg_12m_net_outflow",
-          .agg .avg (.table "monthly_net_outflows") (.col "net_cash_outflow"))
+          .agg .avg monthly12mWindowRel (.col "net_cash_outflow"))
+      , ("m12_cnt",
+          .agg .count monthly12mWindowRel (.col "month_end_date"))
+      , ("m12_distinct",
+          .agg .countDistinct monthly12mWindowRel (.col "month_end_date"))
+      , ("avg_12m_valid",
+          .scalar (.binOp .and (.binOp .eq (.var "m12_cnt") (.litRat 12 1)) (.binOp .eq (.var "m12_distinct") (.litRat 12 1))))
       , ("ecai_resolved_grade_sum",
           .agg .sum ecaiResolvedRel (.col "grade_rank"))
       , ("ecai_investment_grade_count",
           .agg .count (.filter (.binOp .le (.col "grade_rank") (.litRat 3 1)) ecaiResolvedRel) (.col "grade_rank"))
       , ("amort_nsfr_lt_6m_amt",
           .agg .sum
-            (.filter (.binOp .lt (.col "cf_days") (.litRat 180 1)) amortisationEnrichedRel)
+            (.filter (.binOp .lt (.col "cf_days") (.var "six_months_days")) amortisationEnrichedRel)
             (.col "principal_amount"))
       , ("amort_nsfr_6m_to_1y_amt",
           .agg .sum
             (.filter
               (.binOp .and
-                (.binOp .ge (.col "cf_days") (.litRat 180 1))
-                (.binOp .lt (.col "cf_days") (.litRat 365 1)))
+                (.binOp .ge (.col "cf_days") (.var "six_months_days"))
+                (.binOp .lt (.col "cf_days") (.var "one_year_days")))
               amortisationEnrichedRel)
             (.col "principal_amount"))
       , ("amort_nsfr_ge_1y_amt",
           .agg .sum
-            (.filter (.binOp .ge (.col "cf_days") (.litRat 365 1)) amortisationEnrichedRel)
+            (.filter (.binOp .ge (.col "cf_days") (.var "one_year_days")) amortisationEnrichedRel)
             (.col "principal_amount"))
       , ("sft_unwind_hqla1", .agg .sum sftLegsAdjustedRel (.col "adj_hqla1"))
       , ("sft_unwind_hqla2a", .agg .sum sftLegsAdjustedRel (.col "adj_hqla2a"))
@@ -262,7 +304,9 @@ def upstreamProgram : Program :=
       , ("excluded_term_deposits", .var "excluded_term_deposits")
       , ("capped_foreign_sov_hqla1", .var "capped_foreign_sov_hqla1")
       , ("max_30d_collateral_outflow", .var "max_30d_collateral_outflow")
+      , ("collateral_lookback_valid", .var "collateral_lookback_valid")
       , ("avg_12m_net_outflow", .var "avg_12m_net_outflow")
+      , ("avg_12m_valid", .var "avg_12m_valid")
       , ("ecai_resolved_grade_sum", .var "ecai_resolved_grade_sum")
       , ("ecai_investment_grade_count", .var "ecai_investment_grade_count")
       , ("amort_nsfr_lt_6m_amt", .var "amort_nsfr_lt_6m_amt")
@@ -333,6 +377,8 @@ def upstreamInputToTableEnv (input : UpstreamInput) : TableEnv :=
       ]))
   , ("sft_legs", input.sftLegs.map (fun s =>
       [ ("leg_id", .str s.legId)
+      , ("currency", .str s.currency)
+      , ("residual_days", .rat (s.residualDays : Rat))
       , ("meets_operational_reqs", .bool s.meetsOperationalReqs)
       , ("netting_eligible", .bool s.nettingEligible)
       , ("hqla1_delta", .rat s.hqla1Delta)
@@ -343,6 +389,7 @@ def upstreamInputToTableEnv (input : UpstreamInput) : TableEnv :=
 
 def upstreamInputToScalars (input : UpstreamInput) : Row :=
   [ ("reporting_date", .date input.reportingDate)
+  , ("is_aud_only", .bool input.isAudOnly)
   , ("clf_eligible", .bool input.clf.eligible)
   , ("clf_contractual", .rat input.clf.contractualAmount)
   , ("clf_pledged_zero_runoff", .rat input.clf.pledgedZeroRunoff)
@@ -363,7 +410,9 @@ def upstreamResultToRow (r : UpstreamResult) : Row :=
   , ("excluded_term_deposits", .rat r.excludedTermDeposits)
   , ("capped_foreign_sov_hqla1", .rat r.cappedForeignSovHqla1)
   , ("max_30d_collateral_outflow", .rat r.max30dCollateralOutflow)
+  , ("collateral_lookback_valid", .bool r.collateralLookbackValid)
   , ("avg_12m_net_outflow", .rat r.avg12mNetOutflow)
+  , ("avg_12m_valid", .bool r.avg12mValid)
   , ("ecai_resolved_grade_sum", .rat r.ecaiResolvedGradeSum)
   , ("ecai_investment_grade_count", .rat r.ecaiInvestmentGradeCount)
   , ("amort_nsfr_lt_6m_amt", .rat r.amortNsfrLt6mAmt)
@@ -402,6 +451,7 @@ def smokeInput : UpstreamInput :=
       , { currency := "JPY", hqla1ForeignSovAmt := 50, ccyNetOutflow := -10 }
       ]
   , dailyCollateralFlows :=
+      [{ valuationDate := civilDate 2024 6 30, netCollateralFlow := 0 }] ++
       (List.range 35).map (fun (i : Nat) =>
         { valuationDate := civilDate 2026 1 1 + (i : Int)
         , netCollateralFlow := if i < 30 then 1 else -20

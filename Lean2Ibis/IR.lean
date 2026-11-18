@@ -13,6 +13,40 @@ def daysFromCivil (y : Int) (m d : Nat) : Int :=
   let doe : Int := yoe * 365 + yoe / 4 - yoe / 100 + doy
   era * 146097 + doe - 719468
 
+/-- Inverse of `daysFromCivil`: convert days since 1970-01-01 to `(year, month, day)`. -/
+def civilFromDays (z : Int) : Int × Nat × Nat :=
+  let z1 := z + 719468
+  let era := (if z1 ≥ 0 then z1 else z1 - 146096) / 146097
+  let doe := (z1 - era * 146097).toNat
+  let yoe := (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let y := (yoe : Int) + era * 400
+  let doy := doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp := (5 * doy + 2) / 153
+  let d := doy - (153 * mp + 2) / 5 + 1
+  let m := if mp < 10 then mp + 3 else mp - 9
+  let yFinal := if m ≤ 2 then y + 1 else y
+  (yFinal, m, d)
+
+private def isLeapYear (y : Int) : Bool :=
+  (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
+
+private def daysInMonth (y : Int) (m : Nat) : Nat :=
+  match m with
+  | 1 | 3 | 5 | 7 | 8 | 10 | 12 => 31
+  | 4 | 6 | 9 | 11 => 30
+  | 2 => if isLeapYear y then 29 else 28
+  | _ => 30
+
+/-- Add `deltaMonths` calendar months to `epochDays`, clamping day to month-end. -/
+def addMonthsToEpoch (epochDays : Int) (deltaMonths : Int) : Int :=
+  let (y, m, d) := civilFromDays epochDays
+  let totalMonths : Int := (y * 12) + ((m : Int) - 1) + deltaMonths
+  let newY : Int := if totalMonths ≥ 0 then totalMonths / 12 else (totalMonths - 11) / 12
+  let newM0 : Int := totalMonths - newY * 12
+  let newM : Nat := newM0.toNat + 1
+  let newD : Nat := min d (daysInMonth newY newM)
+  daysFromCivil newY newM newD
+
 /-- Runtime value domain for the Lean-to-Ibis IR. -/
 inductive Val where
   | rat (r : Rat)
@@ -83,6 +117,7 @@ inductive SExpr where
   | litBool (b : Bool)
   | litStr (s : String)
   | litDate (y : Int) (m d : Nat)
+  | dateAddMonths (d : SExpr) (months : Int)
   | unOp (op : UnOp) (e : SExpr)
   | binOp (op : BinOp) (l r : SExpr)
   | ite (cond thenE elseE : SExpr)
@@ -97,6 +132,7 @@ def evalSExpr (env : Row) : SExpr → Val
   | .litBool b => .bool b
   | .litStr s => .str s
   | .litDate y m d => .date (daysFromCivil y m d)
+  | .dateAddMonths d m => .date (addMonthsToEpoch (evalSExpr env d).asDate m)
   | .unOp op e =>
     let v := evalSExpr env e
     match op with
@@ -143,6 +179,7 @@ inductive AggOp where
   | max
   | avg
   | count
+  | countDistinct
   | anyBool
   | allBool
   | rowNumber
@@ -163,16 +200,18 @@ def evalAggOp (op : AggOp) (vals : List Val) : Val :=
     if vals.isEmpty then .rat 0
     else .rat (vals.foldl (fun acc v => acc + v.asRat) 0 / (vals.length : Rat))
   | .count => .rat (vals.length : Rat)
+  | .countDistinct => .rat (vals.eraseDups.length : Rat)
   | .anyBool => .bool (vals.any Val.asBool)
   | .allBool => .bool (vals.all Val.asBool)
   | .rowNumber => .rat (vals.length : Rat)
 
-/-- Window specification matching SQL / Ibis `ROWS BETWEEN` semantics. -/
+/-- Window specification matching SQL / Ibis `ROWS BETWEEN` or calendar-day `RANGE` semantics. -/
 structure WindowSpec where
   partitionBy : List String
   orderBy : List (String × Bool) := []
   preceding? : Option Nat := none
   following? : Option Nat := none
+  precedingDays? : Option Nat := none
   deriving DecidableEq, Repr
 
 /-- Relational query AST (compiles directly to Ibis `Table` pipelines). -/
@@ -247,10 +286,18 @@ private def evalWindowCol (rows : List Row) (scalarEnv : Row)
           if op == .rowNumber then
             .rat ((i + 1 : Nat) : Rat)
           else
-            let lo := match spec.preceding? with | none => 0 | some p => i - p
-            let hi := match spec.following? with | none => n - 1 | some f => min (n - 1) (i + f)
-            let frame := listSlice sorted lo hi
-            evalAggOp op (frame.map (fun r' => evalSExpr (r' ++ scalarEnv) expr))
+            match spec.precedingDays?, spec.orderBy with
+            | some pd, [(dateCol, true)] =>
+              let d := (Row.get r dateCol).asDate
+              let frame := sorted.filter (fun r' =>
+                let d' := (Row.get r' dateCol).asDate
+                d - (pd : Int) ≤ d' && d' ≤ d)
+              evalAggOp op (frame.map (fun r' => evalSExpr (r' ++ scalarEnv) expr))
+            | _, _ =>
+              let lo := match spec.preceding? with | none => 0 | some p => i - p
+              let hi := match spec.following? with | none => n - 1 | some f => min (n - 1) (i + f)
+              let frame := listSlice sorted lo hi
+              evalAggOp op (frame.map (fun r' => evalSExpr (r' ++ scalarEnv) expr))
         (outCol, v) :: r))
 
 /-- Denotational semantics of `RelExpr` with ambient scalar environment. -/

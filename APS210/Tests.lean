@@ -304,6 +304,7 @@ example :
         fundingStrategy := fsOk, contingencyFundingPlan := cfpOk, notifications := notifOk,
         hasLevel2Group := false,
         apraAdjustmentsComplied := true,
+        bufferPolicy := some .enforceAllBuffers,
         notifiedApraOfRelianceOrPriorDiscretion := true,
         mlhInput := some {
           assets := [{ id := "cgs", category := .commonwealthAndSemiGovtSecurities, marketValue := 12 }],
@@ -780,7 +781,8 @@ example :
         fundingStrategy := fsOk, contingencyFundingPlan := cfpOk, notifications := notifOk,
         stressTesting := some stOk, hasLevel2Group := false,
         lcrAudInput := some lcrAud, lcrAllCurrenciesInput := some lcrAll, nsfrInput := some nsfrIn,
-        apraAdjustmentsComplied := true, notifiedApraOfRelianceOrPriorDiscretion := true }
+        apraAdjustmentsComplied := true, bufferPolicy := some .enforceAllBuffers,
+        notifiedApraOfRelianceOrPriorDiscretion := true }
     res.overallCompliant = true ∧
     (res.nsfrResult.map (·.totalRsf) = some 100) := by native_decide
 

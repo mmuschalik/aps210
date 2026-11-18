@@ -18,6 +18,40 @@ def civilDate (y : Int) (m d : Nat) : EpochDate :=
   let doe : Int := yoe * 365 + yoe / 4 - yoe / 100 + doy
   era * 146097 + doe - 719468
 
+/-- Inverse of `civilDate`: convert `EpochDate` to `(year, month, day)`. -/
+def civilFromEpoch (z : EpochDate) : Int × Nat × Nat :=
+  let z1 := z + 719468
+  let era := (if z1 ≥ 0 then z1 else z1 - 146096) / 146097
+  let doe := (z1 - era * 146097).toNat
+  let yoe := (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let y := (yoe : Int) + era * 400
+  let doy := doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp := (5 * doy + 2) / 153
+  let d := doy - (153 * mp + 2) / 5 + 1
+  let m := if mp < 10 then mp + 3 else mp - 9
+  let yFinal := if m ≤ 2 then y + 1 else y
+  (yFinal, m, d)
+
+private def isLeapYear (y : Int) : Bool :=
+  (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
+
+private def daysInMonth (y : Int) (m : Nat) : Nat :=
+  match m with
+  | 1 | 3 | 5 | 7 | 8 | 10 | 12 => 31
+  | 4 | 6 | 9 | 11 => 30
+  | 2 => if isLeapYear y then 29 else 28
+  | _ => 30
+
+/-- Add `deltaMonths` calendar months to `EpochDate`, clamping day to month-end. -/
+def addMonthsEpoch (epochDays : EpochDate) (deltaMonths : Int) : EpochDate :=
+  let (y, m, d) := civilFromEpoch epochDays
+  let totalMonths : Int := (y * 12) + ((m : Int) - 1) + deltaMonths
+  let newY : Int := if totalMonths ≥ 0 then totalMonths / 12 else (totalMonths - 11) / 12
+  let newM0 : Int := totalMonths - newY * 12
+  let newM : Nat := newM0.toNat + 1
+  let newD : Nat := min d (daysInMonth newY newM)
+  civilDate newY newM newD
+
 -- ============================================================================
 -- 1. Maturity & Encumbrance Bucketing (Attachment A / Attachment C)
 -- ============================================================================
@@ -52,6 +86,15 @@ def PositionRow.residualDays (reportingDate : EpochDate) (p : PositionRow) : Rat
 def PositionRow.encumbranceDays (reportingDate : EpochDate) (p : PositionRow) : Rat :=
   if p.isEncumbered then nonNeg ((p.encumbranceEndDate - reportingDate : Int) : Rat) else 0
 
+/-- Calendar-based NSFR bucket classification relative to `reportingDate` (+6m, +12m). -/
+def classifyNsfrBucketCal (reportingDate : EpochDate) (days : Rat) : NsfrBucket :=
+  let sixMDays : Rat := ((addMonthsEpoch reportingDate 6 - reportingDate : Int) : Rat)
+  let oneYDays : Rat := ((addMonthsEpoch reportingDate 12 - reportingDate : Int) : Rat)
+  if days < sixMDays then .lt6m
+  else if days < oneYDays then .sixMTo1y
+  else .ge1y
+
+/-- Legacy day-count NSFR bucket classification (180 / 365). -/
 def classifyNsfrBucket (days : Rat) : NsfrBucket :=
   if days < 180 then .lt6m
   else if days < 365 then .sixMTo1y
@@ -171,6 +214,19 @@ structure DailyCollateralFlow where
 
 private def absRat (x : Rat) : Rat := if x < 0 then -x else x
 
+/-- Calendar-date 30-day rolling collateral lookback over trailing 24 months,
+    plus lookback coverage validation (at least one record reaching back >= 23 months). -/
+def max30dCollateralOutflowCal (reportingDate : EpochDate) (flows : List DailyCollateralFlow) : Money × Bool :=
+  let lookback24m := addMonthsEpoch reportingDate (-24)
+  let lookback23m := addMonthsEpoch reportingDate (-23)
+  let inWindow := flows.filter (fun f => lookback24m ≤ f.valuationDate && f.valuationDate ≤ reportingDate)
+  let rollingAbs := inWindow.map (fun r =>
+    let frame := inWindow.filter (fun f => r.valuationDate - 29 ≤ f.valuationDate && f.valuationDate ≤ r.valuationDate)
+    absRat (sumBy frame (·.netCollateralFlow)))
+  let maxOut := rollingAbs.foldl max 0
+  let hasEarlyCoverage := inWindow.any (fun f => f.valuationDate ≤ lookback23m)
+  (maxOut, !inWindow.isEmpty && hasEarlyCoverage)
+
 def max30dCollateralOutflow (flows : List DailyCollateralFlow) : Money :=
   let sorted := flows.mergeSort (fun a b => a.valuationDate ≤ b.valuationDate)
   let n := sorted.length
@@ -188,6 +244,16 @@ structure MonthlyNetOutflow where
   monthEndDate : EpochDate
   netCashOutflow : Money
   deriving DecidableEq, Repr
+
+/-- Select trailing 12-month window `(reportingDate - 12m, reportingDate]`,
+    validate 12 distinct monthly observations, and compute the average. -/
+def avg12mNetOutflowCal (reportingDate : EpochDate) (months : List MonthlyNetOutflow) : Money × Bool :=
+  let start12m := addMonthsEpoch reportingDate (-12)
+  let inWindow := months.filter (fun m => start12m < m.monthEndDate && m.monthEndDate ≤ reportingDate)
+  let cnt := inWindow.length
+  let distinctCnt := (inWindow.map (·.monthEndDate)).eraseDups.length
+  let avg := if cnt == 0 then 0 else sumBy inWindow (·.netCashOutflow) / (cnt : Rat)
+  (avg, cnt == 12 && distinctCnt == 12)
 
 def avg12mNetOutflow (months : List MonthlyNetOutflow) : Money :=
   if months.isEmpty then 0
@@ -239,6 +305,8 @@ structure AmortisationCashflowRow where
 
 structure SftLegRow where
   legId : String
+  currency : String := "AUD"
+  residualDays : Nat := 30
   meetsOperationalReqs : Bool
   nettingEligible : Bool
   hqla1Delta : Money
@@ -247,7 +315,9 @@ structure SftLegRow where
   deriving DecidableEq, Repr
 
 def SftLegRow.toLcrLeg (s : SftLegRow) : LCR.ShortTermSftLeg :=
-  { hqla1Delta := s.hqla1Delta
+  { currency := if s.currency == "AUD" then .aud else .foreign s.currency
+  , residualMaturityDays := s.residualDays
+  , hqla1Delta := s.hqla1Delta
   , hqla2aDelta := s.hqla2aDelta
   , hqla2bDelta := s.hqla2bDelta
   , meetsOperationalReqs := s.meetsOperationalReqs
@@ -287,6 +357,7 @@ def ClfSummaryInput.recognised (c : ClfSummaryInput) : Money :=
 
 structure UpstreamInput where
   reportingDate : EpochDate
+  isAudOnly : Bool := false
   positions : List PositionRow
   derivativeTrades : List DerivativeTrade
   depositAccounts : List DepositAccount
@@ -312,7 +383,9 @@ structure UpstreamResult where
   excludedTermDeposits : Money
   cappedForeignSovHqla1 : Money
   max30dCollateralOutflow : Money
+  collateralLookbackValid : Bool
   avg12mNetOutflow : Money
+  avg12mValid : Bool
   ecaiResolvedGradeSum : Rat
   ecaiInvestmentGradeCount : Rat
   amortNsfrLt6mAmt : Money
@@ -326,18 +399,20 @@ structure UpstreamResult where
 
 def evaluateUpstream (input : UpstreamInput) : UpstreamResult :=
   let lcr30d := sumBy (input.positions.filter (fun p => p.residualDays input.reportingDate ≤ 30)) (·.amount)
-  let nsfrLt6m := sumBy (input.positions.filter (fun p => classifyNsfrBucket (p.residualDays input.reportingDate) == .lt6m)) (·.amount)
-  let nsfr6mTo1y := sumBy (input.positions.filter (fun p => classifyNsfrBucket (p.residualDays input.reportingDate) == .sixMTo1y)) (·.amount)
-  let nsfrGe1y := sumBy (input.positions.filter (fun p => classifyNsfrBucket (p.residualDays input.reportingDate) == .ge1y)) (·.amount)
+  let nsfrLt6m := sumBy (input.positions.filter (fun p => classifyNsfrBucketCal input.reportingDate (p.residualDays input.reportingDate) == .lt6m)) (·.amount)
+  let nsfr6mTo1y := sumBy (input.positions.filter (fun p => classifyNsfrBucketCal input.reportingDate (p.residualDays input.reportingDate) == .sixMTo1y)) (·.amount)
+  let nsfrGe1y := sumBy (input.positions.filter (fun p => classifyNsfrBucketCal input.reportingDate (p.residualDays input.reportingDate) == .ge1y)) (·.amount)
   let encGe1y := sumBy (input.positions.filter (fun p => p.isEncumbered && p.encumbranceDays input.reportingDate ≥ 365)) (·.amount)
   let (dOut, dIn) := netDerivativeOutflowInflow input.derivativeTrades
   let dep := evaluateDeposits input.depositAccounts
   let ecaiResolved := resolveEcaiByExposure input.ecaiAssessments
   let amortDays (c : AmortisationCashflowRow) : Rat := ((c.paymentDate - input.reportingDate : Int) : Rat)
-  let amortLt6m := sumBy (input.amortisationCashflows.filter (fun c => classifyNsfrBucket (amortDays c) == .lt6m)) (·.principalAmount)
-  let amort6mTo1y := sumBy (input.amortisationCashflows.filter (fun c => classifyNsfrBucket (amortDays c) == .sixMTo1y)) (·.principalAmount)
-  let amortGe1y := sumBy (input.amortisationCashflows.filter (fun c => classifyNsfrBucket (amortDays c) == .ge1y)) (·.principalAmount)
-  let unwind := LCR.computeUnwindAdjustments (input.sftLegs.map SftLegRow.toLcrLeg)
+  let amortLt6m := sumBy (input.amortisationCashflows.filter (fun c => classifyNsfrBucketCal input.reportingDate (amortDays c) == .lt6m)) (·.principalAmount)
+  let amort6mTo1y := sumBy (input.amortisationCashflows.filter (fun c => classifyNsfrBucketCal input.reportingDate (amortDays c) == .sixMTo1y)) (·.principalAmount)
+  let amortGe1y := sumBy (input.amortisationCashflows.filter (fun c => classifyNsfrBucketCal input.reportingDate (amortDays c) == .ge1y)) (·.principalAmount)
+  let unwind := LCR.computeUnwindAdjustments (input.sftLegs.map SftLegRow.toLcrLeg) input.isAudOnly
+  let (maxCollat, collatValid) := max30dCollateralOutflowCal input.reportingDate input.dailyCollateralFlows
+  let (avg12m, avgValid) := avg12mNetOutflowCal input.reportingDate input.monthlyNetOutflows
   { posLcrWithin30dAmt := lcr30d
   , posNsfrLt6mAmt := nsfrLt6m
   , posNsfr6mTo1yAmt := nsfr6mTo1y
@@ -349,8 +424,10 @@ def evaluateUpstream (input : UpstreamInput) : UpstreamResult :=
   , fcsInsuredDeposits := dep.fcsInsuredDeposits
   , excludedTermDeposits := dep.excludedTermDeposits
   , cappedForeignSovHqla1 := cappedForeignSovHqla1 input.ccyHqla1Positions
-  , max30dCollateralOutflow := max30dCollateralOutflow input.dailyCollateralFlows
-  , avg12mNetOutflow := avg12mNetOutflow input.monthlyNetOutflows
+  , max30dCollateralOutflow := maxCollat
+  , collateralLookbackValid := collatValid
+  , avg12mNetOutflow := avg12m
+  , avg12mValid := avgValid
   , ecaiResolvedGradeSum := sumBy ecaiResolved (fun (_, g) => (g.rank : Rat))
   , ecaiInvestmentGradeCount := ((ecaiResolved.filter (fun (_, g) => g.rank ≤ 3)).length : Rat)
   , amortNsfrLt6mAmt := amortLt6m
