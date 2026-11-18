@@ -150,12 +150,34 @@ def nsfrProgram : Program :=
     (.binOp .eq rsfEffectiveFactorExpr (.litRat 10 100))
   let is32b := .binOp .and (.binOp .eq (.col "category") (.litStr "self_securitised_clf"))
     (.binOp .eq rsfEffectiveFactorExpr (.litRat 10 100))
+  let mkClfBucketRel (pred : SExpr) (limVar : String) (defaultFb : SExpr) : RelExpr :=
+    let base :=
+      .withColumns
+        [ ("val", .unOp .nonNeg (.col "carrying_value"))
+        , ("fb", .ite (.col "has_excess_clf_fallback_override")
+            (.unOp .nonNeg (.col "excess_clf_fallback_factor")) defaultFb) ]
+        (.filter pred (.table "rsf_assets"))
+    let windowed :=
+      .window
+        [ ("cum_incl", .sum, .col "val",
+            { partitionBy := [], orderBy := [("fb", false)], preceding? := none, following? := some 0 }) ]
+        base
+    .withColumns
+      [ ("cum_prev", .unOp .nonNeg (.binOp .sub (.col "cum_incl") (.col "val")))
+      , ("rem_before", .unOp .nonNeg (.binOp .sub (.var limVar) (.col "cum_prev")))
+      , ("within", .binOp .min (.col "val") (.col "rem_before"))
+      , ("excess", .unOp .nonNeg (.binOp .sub (.col "val") (.col "within")))
+      , ("item_rsf", .binOp .add
+          (.binOp .mul (.litRat 10 100) (.col "within"))
+          (.binOp .mul (.col "fb") (.col "excess"))) ]
+      windowed
   { name := "evaluate_nsfr"
     tableParams :=
       [ ("asf_items", ["category", "carrying_value", "custom_factor", "is_interdependent_approved"])
       , ("rsf_assets", ["category", "carrying_value", "encumbrance", "custom_factor",
           "on_behalf_of_customer_no_guarantee", "has_exceptional_cb_factor",
-          "exceptional_cb_factor", "is_interdependent_approved", "excluded_from_balance_sheet_rsf"])
+          "exceptional_cb_factor", "is_interdependent_approved", "excluded_from_balance_sheet_rsf",
+          "has_excess_clf_fallback_override", "excess_clf_fallback_factor"])
       , ("obs_exposures", ["category", "amount"]) ]
     scalarParams :=
       [ ("required_min_rate", .rat)
@@ -165,28 +187,17 @@ def nsfrProgram : Program :=
     lets :=
       [ ("total_asf", .aggSum (.table "asf_items")
           (.binOp .mul (.unOp .nonNeg (.col "carrying_value")) asfFactorExpr))
-      , ("raw_asset_rsf", .aggSum (.table "rsf_assets")
-          (.binOp .mul (.unOp .nonNeg (.col "carrying_value")) rsfEffectiveFactorExpr))
       , ("non_clf_rsf", .aggSum
           (.filter (.unOp .not (.binOp .or is32a is32b)) (.table "rsf_assets"))
           (.binOp .mul (.unOp .nonNeg (.col "carrying_value")) rsfEffectiveFactorExpr))
       , ("total_32a", .aggSum (.filter is32a (.table "rsf_assets")) (.unOp .nonNeg (.col "carrying_value")))
-      , ("total_32b", .aggSum (.filter is32b (.table "rsf_assets")) (.unOp .nonNeg (.col "carrying_value")))
-      , ("clf_lim", .scalar (.unOp .nonNeg (.col "recognised_clf_limit")))
-      , ("clf_32a_lim", .scalar (.binOp .add (.col "clf_lim") (.unOp .nonNeg (.col "host_ala_in_lcr_limit"))))
-      , ("elig_32a", .scalar (.binOp .min (.col "total_32a") (.col "clf_32a_lim")))
-      , ("excess_32a", .scalar (.binOp .sub (.col "total_32a") (.col "elig_32a")))
-      , ("rem_32a_lim", .scalar (.unOp .nonNeg (.binOp .sub (.col "clf_32a_lim") (.col "total_32a"))))
-      , ("rem_lim", .scalar (.binOp .min (.col "clf_lim") (.col "rem_32a_lim")))
-      , ("elig_32b", .scalar (.binOp .min (.col "total_32b") (.col "rem_lim")))
-      , ("excess_32b", .scalar (.binOp .sub (.col "total_32b") (.col "elig_32b")))
-      , ("capped_asset_rsf", .scalar (.binOp .add (.col "non_clf_rsf")
-          (.binOp .add
-            (.binOp .mul (.litRat 10 100) (.binOp .add (.col "elig_32a") (.col "elig_32b")))
-            (.binOp .add
-              (.binOp .mul (.litRat 50 100) (.col "excess_32a"))
-              (.binOp .mul (.litRat 85 100) (.col "excess_32b"))))))
-      , ("asset_rsf", .scalar (.ite (.col "has_clf_limit") (.col "capped_asset_rsf") (.col "raw_asset_rsf")))
+      , ("clf_lim", .scalar (.ite (.var "has_clf_limit") (.unOp .nonNeg (.var "recognised_clf_limit")) (.litRat 0 1)))
+      , ("clf_32a_lim", .scalar (.binOp .add (.var "clf_lim") (.unOp .nonNeg (.var "host_ala_in_lcr_limit"))))
+      , ("rem_32a_lim", .scalar (.unOp .nonNeg (.binOp .sub (.var "clf_32a_lim") (.var "total_32a"))))
+      , ("rem_lim", .scalar (.binOp .min (.var "clf_lim") (.var "rem_32a_lim")))
+      , ("rsf_32a", .agg .sum (mkClfBucketRel is32a "clf_32a_lim" (.litRat 50 100)) (.col "item_rsf"))
+      , ("rsf_32b", .agg .sum (mkClfBucketRel is32b "rem_lim" (.litRat 85 100)) (.col "item_rsf"))
+      , ("asset_rsf", .scalar (.binOp .add (.col "non_clf_rsf") (.binOp .add (.col "rsf_32a") (.col "rsf_32b"))))
       , ("obs_rsf", .aggSum (.table "obs_exposures")
           (.binOp .mul (.unOp .nonNeg (.col "amount")) obsFactorExpr))
       , ("nsfr_deriv_liab", .scalar (.unOp .nonNeg

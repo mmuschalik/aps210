@@ -856,10 +856,13 @@ def evaluate_lcr(
                     (t["is_intermediated"] & (~(t["intermediated_look_through_met"]))),
                     ibis.ifelse(
                         (
-                            t["residual_maturity_or_notice_gt_30d"]
+                            (~(t["notice_deposit_called"]))
                             & (
-                                t["no_withdrawal_right_or_material_penalty"]
-                                & (~(t["category_tainted_by_early_withdrawal"]))
+                                t["residual_maturity_or_notice_gt_30d"]
+                                & (
+                                    t["no_withdrawal_right_or_material_penalty"]
+                                    & (~(t["category_tainted_by_early_withdrawal"]))
+                                )
                             )
                         ),
                         ibis.literal(0, type="decimal(38, 12)"),
@@ -874,10 +877,13 @@ def evaluate_lcr(
                         ),
                         ibis.ifelse(
                             (
-                                t["residual_maturity_or_notice_gt_30d"]
+                                (~(t["notice_deposit_called"]))
                                 & (
-                                    t["no_withdrawal_right_or_material_penalty"]
-                                    & (~(t["category_tainted_by_early_withdrawal"]))
+                                    t["residual_maturity_or_notice_gt_30d"]
+                                    & (
+                                        t["no_withdrawal_right_or_material_penalty"]
+                                        & (~(t["category_tainted_by_early_withdrawal"]))
+                                    )
                                 )
                             ),
                             ibis.literal(0, type="decimal(38, 12)"),

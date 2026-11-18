@@ -197,596 +197,6 @@ def evaluate_nsfr(
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),
     )
-    raw_asset_rsf = ibis.coalesce(
-        (rsf_assets)
-        .aggregate(
-            val=lambda t: (
-                ibis.greatest(
-                    t["carrying_value"], ibis.literal(0, type="decimal(38, 12)")
-                )
-                * ibis.ifelse(
-                    (
-                        t["is_interdependent_approved"]
-                        | (
-                            t["excluded_from_balance_sheet_rsf"]
-                            | (
-                                (
-                                    t["category"]
-                                    == ibis.literal("initial_margin_ccp_default")
-                                )
-                                & t["on_behalf_of_customer_no_guarantee"]
-                            )
-                        )
-                    ),
-                    ibis.literal(0, type="decimal(38, 12)"),
-                    ibis.ifelse(
-                        t["has_exceptional_cb_factor"],
-                        t["exceptional_cb_factor"],
-                        ibis.cases(
-                            (
-                                t["encumbrance"] == "unencumbered",
-                                ibis.cases(
-                                    (
-                                        t["category"] == "notes_and_coins",
-                                        ibis.literal(0, type="decimal(38, 12)"),
-                                    ),
-                                    (
-                                        t["category"] == "cb_reserves_balances",
-                                        ibis.greatest(
-                                            t["custom_factor"],
-                                            ibis.literal(0, type="decimal(38, 12)"),
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "cb_claims_lt6m",
-                                        ibis.literal(0, type="decimal(38, 12)"),
-                                    ),
-                                    (
-                                        t["category"] == "trade_date_receivables",
-                                        ibis.literal(0, type="decimal(38, 12)"),
-                                    ),
-                                    (
-                                        t["category"] == "unencumbered_hqla1_5pct",
-                                        (
-                                            ibis.literal(5, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "loan_fi_lt6m_hqla1_rehyp",
-                                        (
-                                            ibis.literal(10, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "clf_third_party_or_host_ala",
-                                        (
-                                            ibis.literal(10, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "self_securitised_clf",
-                                        (
-                                            ibis.literal(10, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "unencumbered_hqla2a",
-                                        (
-                                            ibis.literal(15, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "other_loan_fi_lt6m",
-                                        (
-                                            ibis.literal(15, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "unencumbered_hqla2b",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "hqla_enc_6m_to_lt1y",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "loans_fi_cb_6m_to_lt1y",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "op_deposits_other_adis",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "asx200_non_fi_equities",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "other_non_hqla_lt1y",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"]
-                                        == "std_res_mortgage_lvr_le80_ge1y",
-                                        (
-                                            ibis.literal(65, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"]
-                                        == "other_loans_non_fi_rw_le35_ge1y",
-                                        (
-                                            ibis.literal(65, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "initial_margin_ccp_default",
-                                        ibis.ifelse(
-                                            t["on_behalf_of_customer_no_guarantee"],
-                                            ibis.literal(0, type="decimal(38, 12)"),
-                                            ibis.greatest(
-                                                (
-                                                    ibis.literal(
-                                                        85, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                                t["custom_factor"],
-                                            ),
-                                        ),
-                                    ),
-                                    (
-                                        t["category"]
-                                        == "other_performing_loans_non_fi_ge1y",
-                                        (
-                                            ibis.literal(85, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "non_defaulted_sec_ge1y_eq",
-                                        (
-                                            ibis.literal(85, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "physical_traded_commodities",
-                                        (
-                                            ibis.literal(85, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "all_other_assets",
-                                        ibis.literal(1, type="decimal(38, 12)"),
-                                    ),
-                                    else_=ibis.literal(1, type="decimal(38, 12)"),
-                                ),
-                            ),
-                            (
-                                t["encumbrance"] == "less_than_six_months",
-                                ibis.cases(
-                                    (
-                                        t["category"] == "notes_and_coins",
-                                        ibis.literal(0, type="decimal(38, 12)"),
-                                    ),
-                                    (
-                                        t["category"] == "cb_reserves_balances",
-                                        ibis.greatest(
-                                            t["custom_factor"],
-                                            ibis.literal(0, type="decimal(38, 12)"),
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "cb_claims_lt6m",
-                                        ibis.literal(0, type="decimal(38, 12)"),
-                                    ),
-                                    (
-                                        t["category"] == "trade_date_receivables",
-                                        ibis.literal(0, type="decimal(38, 12)"),
-                                    ),
-                                    (
-                                        t["category"] == "unencumbered_hqla1_5pct",
-                                        (
-                                            ibis.literal(5, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "loan_fi_lt6m_hqla1_rehyp",
-                                        (
-                                            ibis.literal(10, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "clf_third_party_or_host_ala",
-                                        (
-                                            ibis.literal(10, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "self_securitised_clf",
-                                        (
-                                            ibis.literal(10, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "unencumbered_hqla2a",
-                                        (
-                                            ibis.literal(15, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "other_loan_fi_lt6m",
-                                        (
-                                            ibis.literal(15, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "unencumbered_hqla2b",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "hqla_enc_6m_to_lt1y",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "loans_fi_cb_6m_to_lt1y",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "op_deposits_other_adis",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "asx200_non_fi_equities",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "other_non_hqla_lt1y",
-                                        (
-                                            ibis.literal(50, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"]
-                                        == "std_res_mortgage_lvr_le80_ge1y",
-                                        (
-                                            ibis.literal(65, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"]
-                                        == "other_loans_non_fi_rw_le35_ge1y",
-                                        (
-                                            ibis.literal(65, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "initial_margin_ccp_default",
-                                        ibis.ifelse(
-                                            t["on_behalf_of_customer_no_guarantee"],
-                                            ibis.literal(0, type="decimal(38, 12)"),
-                                            ibis.greatest(
-                                                (
-                                                    ibis.literal(
-                                                        85, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                                t["custom_factor"],
-                                            ),
-                                        ),
-                                    ),
-                                    (
-                                        t["category"]
-                                        == "other_performing_loans_non_fi_ge1y",
-                                        (
-                                            ibis.literal(85, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "non_defaulted_sec_ge1y_eq",
-                                        (
-                                            ibis.literal(85, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "physical_traded_commodities",
-                                        (
-                                            ibis.literal(85, type="decimal(38, 12)")
-                                            / ibis.literal(100, type="decimal(38, 12)")
-                                        ),
-                                    ),
-                                    (
-                                        t["category"] == "all_other_assets",
-                                        ibis.literal(1, type="decimal(38, 12)"),
-                                    ),
-                                    else_=ibis.literal(1, type="decimal(38, 12)"),
-                                ),
-                            ),
-                            (
-                                t["encumbrance"] == "six_months_to_less_than_one_year",
-                                ibis.greatest(
-                                    (
-                                        ibis.literal(50, type="decimal(38, 12)")
-                                        / ibis.literal(100, type="decimal(38, 12)")
-                                    ),
-                                    ibis.cases(
-                                        (
-                                            t["category"] == "notes_and_coins",
-                                            ibis.literal(0, type="decimal(38, 12)"),
-                                        ),
-                                        (
-                                            t["category"] == "cb_reserves_balances",
-                                            ibis.greatest(
-                                                t["custom_factor"],
-                                                ibis.literal(0, type="decimal(38, 12)"),
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "cb_claims_lt6m",
-                                            ibis.literal(0, type="decimal(38, 12)"),
-                                        ),
-                                        (
-                                            t["category"] == "trade_date_receivables",
-                                            ibis.literal(0, type="decimal(38, 12)"),
-                                        ),
-                                        (
-                                            t["category"] == "unencumbered_hqla1_5pct",
-                                            (
-                                                ibis.literal(5, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "loan_fi_lt6m_hqla1_rehyp",
-                                            (
-                                                ibis.literal(10, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"]
-                                            == "clf_third_party_or_host_ala",
-                                            (
-                                                ibis.literal(10, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "self_securitised_clf",
-                                            (
-                                                ibis.literal(10, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "unencumbered_hqla2a",
-                                            (
-                                                ibis.literal(15, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "other_loan_fi_lt6m",
-                                            (
-                                                ibis.literal(15, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "unencumbered_hqla2b",
-                                            (
-                                                ibis.literal(50, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "hqla_enc_6m_to_lt1y",
-                                            (
-                                                ibis.literal(50, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "loans_fi_cb_6m_to_lt1y",
-                                            (
-                                                ibis.literal(50, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "op_deposits_other_adis",
-                                            (
-                                                ibis.literal(50, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "asx200_non_fi_equities",
-                                            (
-                                                ibis.literal(50, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "other_non_hqla_lt1y",
-                                            (
-                                                ibis.literal(50, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"]
-                                            == "std_res_mortgage_lvr_le80_ge1y",
-                                            (
-                                                ibis.literal(65, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"]
-                                            == "other_loans_non_fi_rw_le35_ge1y",
-                                            (
-                                                ibis.literal(65, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"]
-                                            == "initial_margin_ccp_default",
-                                            ibis.ifelse(
-                                                t["on_behalf_of_customer_no_guarantee"],
-                                                ibis.literal(0, type="decimal(38, 12)"),
-                                                ibis.greatest(
-                                                    (
-                                                        ibis.literal(
-                                                            85, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                    t["custom_factor"],
-                                                ),
-                                            ),
-                                        ),
-                                        (
-                                            t["category"]
-                                            == "other_performing_loans_non_fi_ge1y",
-                                            (
-                                                ibis.literal(85, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"]
-                                            == "non_defaulted_sec_ge1y_eq",
-                                            (
-                                                ibis.literal(85, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"]
-                                            == "physical_traded_commodities",
-                                            (
-                                                ibis.literal(85, type="decimal(38, 12)")
-                                                / ibis.literal(
-                                                    100, type="decimal(38, 12)"
-                                                )
-                                            ),
-                                        ),
-                                        (
-                                            t["category"] == "all_other_assets",
-                                            ibis.literal(1, type="decimal(38, 12)"),
-                                        ),
-                                        else_=ibis.literal(1, type="decimal(38, 12)"),
-                                    ),
-                                ),
-                            ),
-                            (
-                                t["encumbrance"] == "one_year_or_more",
-                                ibis.literal(1, type="decimal(38, 12)"),
-                            ),
-                            else_=ibis.literal(1, type="decimal(38, 12)"),
-                        ),
-                    ),
-                )
-            ).sum()
-        )["val"]
-        .as_scalar(),
-        ibis.literal(0, type="decimal(38, 12)"),
-    )
     non_clf_rsf = ibis.coalesce(
         (
             (rsf_assets).filter(
@@ -4217,894 +3627,2553 @@ def evaluate_nsfr(
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),
     )
-    total_32b = ibis.coalesce(
+    clf_lim = ibis.ifelse(
+        has_clf_limit,
+        ibis.greatest(recognised_clf_limit, ibis.literal(0, type="decimal(38, 12)")),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
+    clf_32a_lim = clf_lim + ibis.greatest(
+        host_ala_in_lcr_limit, ibis.literal(0, type="decimal(38, 12)")
+    )
+    rem_32a_lim = ibis.greatest(
+        (clf_32a_lim - total_32a), ibis.literal(0, type="decimal(38, 12)")
+    )
+    rem_lim = ibis.least(clf_lim, rem_32a_lim)
+    rsf_32a = ibis.coalesce(
         (
-            (rsf_assets).filter(
-                lambda t: (
-                    (t["category"] == ibis.literal("self_securitised_clf"))
-                    & (
-                        ibis.ifelse(
+            (
+                (
+                    (
+                        (
                             (
-                                t["is_interdependent_approved"]
-                                | (
-                                    t["excluded_from_balance_sheet_rsf"]
-                                    | (
+                                (
+                                    (
                                         (
-                                            t["category"]
-                                            == ibis.literal(
-                                                "initial_margin_ccp_default"
+                                            (rsf_assets).filter(
+                                                lambda t: (
+                                                    (
+                                                        t["category"]
+                                                        == ibis.literal(
+                                                            "clf_third_party_or_host_ala"
+                                                        )
+                                                    )
+                                                    & (
+                                                        ibis.ifelse(
+                                                            (
+                                                                t[
+                                                                    "is_interdependent_approved"
+                                                                ]
+                                                                | (
+                                                                    t[
+                                                                        "excluded_from_balance_sheet_rsf"
+                                                                    ]
+                                                                    | (
+                                                                        (
+                                                                            t[
+                                                                                "category"
+                                                                            ]
+                                                                            == ibis.literal(
+                                                                                "initial_margin_ccp_default"
+                                                                            )
+                                                                        )
+                                                                        & t[
+                                                                            "on_behalf_of_customer_no_guarantee"
+                                                                        ]
+                                                                    )
+                                                                )
+                                                            ),
+                                                            ibis.literal(
+                                                                0,
+                                                                type="decimal(38, 12)",
+                                                            ),
+                                                            ibis.ifelse(
+                                                                t[
+                                                                    "has_exceptional_cb_factor"
+                                                                ],
+                                                                t[
+                                                                    "exceptional_cb_factor"
+                                                                ],
+                                                                ibis.cases(
+                                                                    (
+                                                                        t["encumbrance"]
+                                                                        == "unencumbered",
+                                                                        ibis.cases(
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "notes_and_coins",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "cb_reserves_balances",
+                                                                                ibis.greatest(
+                                                                                    t[
+                                                                                        "custom_factor"
+                                                                                    ],
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "cb_claims_lt6m",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "trade_date_receivables",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla1_5pct",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        5,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "loan_fi_lt6m_hqla1_rehyp",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "clf_third_party_or_host_ala",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "self_securitised_clf",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla2a",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        15,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_loan_fi_lt6m",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        15,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla2b",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "hqla_enc_6m_to_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "loans_fi_cb_6m_to_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "op_deposits_other_adis",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "asx200_non_fi_equities",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_non_hqla_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "std_res_mortgage_lvr_le80_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        65,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_loans_non_fi_rw_le35_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        65,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "initial_margin_ccp_default",
+                                                                                ibis.ifelse(
+                                                                                    t[
+                                                                                        "on_behalf_of_customer_no_guarantee"
+                                                                                    ],
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                    ibis.greatest(
+                                                                                        (
+                                                                                            ibis.literal(
+                                                                                                85,
+                                                                                                type="decimal(38, 12)",
+                                                                                            )
+                                                                                            / ibis.literal(
+                                                                                                100,
+                                                                                                type="decimal(38, 12)",
+                                                                                            )
+                                                                                        ),
+                                                                                        t[
+                                                                                            "custom_factor"
+                                                                                        ],
+                                                                                    ),
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_performing_loans_non_fi_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "non_defaulted_sec_ge1y_eq",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "physical_traded_commodities",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "all_other_assets",
+                                                                                ibis.literal(
+                                                                                    1,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            else_=ibis.literal(
+                                                                                1,
+                                                                                type="decimal(38, 12)",
+                                                                            ),
+                                                                        ),
+                                                                    ),
+                                                                    (
+                                                                        t["encumbrance"]
+                                                                        == "less_than_six_months",
+                                                                        ibis.cases(
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "notes_and_coins",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "cb_reserves_balances",
+                                                                                ibis.greatest(
+                                                                                    t[
+                                                                                        "custom_factor"
+                                                                                    ],
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "cb_claims_lt6m",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "trade_date_receivables",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla1_5pct",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        5,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "loan_fi_lt6m_hqla1_rehyp",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "clf_third_party_or_host_ala",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "self_securitised_clf",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla2a",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        15,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_loan_fi_lt6m",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        15,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla2b",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "hqla_enc_6m_to_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "loans_fi_cb_6m_to_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "op_deposits_other_adis",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "asx200_non_fi_equities",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_non_hqla_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "std_res_mortgage_lvr_le80_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        65,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_loans_non_fi_rw_le35_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        65,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "initial_margin_ccp_default",
+                                                                                ibis.ifelse(
+                                                                                    t[
+                                                                                        "on_behalf_of_customer_no_guarantee"
+                                                                                    ],
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                    ibis.greatest(
+                                                                                        (
+                                                                                            ibis.literal(
+                                                                                                85,
+                                                                                                type="decimal(38, 12)",
+                                                                                            )
+                                                                                            / ibis.literal(
+                                                                                                100,
+                                                                                                type="decimal(38, 12)",
+                                                                                            )
+                                                                                        ),
+                                                                                        t[
+                                                                                            "custom_factor"
+                                                                                        ],
+                                                                                    ),
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_performing_loans_non_fi_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "non_defaulted_sec_ge1y_eq",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "physical_traded_commodities",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "all_other_assets",
+                                                                                ibis.literal(
+                                                                                    1,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            else_=ibis.literal(
+                                                                                1,
+                                                                                type="decimal(38, 12)",
+                                                                            ),
+                                                                        ),
+                                                                    ),
+                                                                    (
+                                                                        t["encumbrance"]
+                                                                        == "six_months_to_less_than_one_year",
+                                                                        ibis.greatest(
+                                                                            (
+                                                                                ibis.literal(
+                                                                                    50,
+                                                                                    type="decimal(38, 12)",
+                                                                                )
+                                                                                / ibis.literal(
+                                                                                    100,
+                                                                                    type="decimal(38, 12)",
+                                                                                )
+                                                                            ),
+                                                                            ibis.cases(
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "notes_and_coins",
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "cb_reserves_balances",
+                                                                                    ibis.greatest(
+                                                                                        t[
+                                                                                            "custom_factor"
+                                                                                        ],
+                                                                                        ibis.literal(
+                                                                                            0,
+                                                                                            type="decimal(38, 12)",
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "cb_claims_lt6m",
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "trade_date_receivables",
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "unencumbered_hqla1_5pct",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            5,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "loan_fi_lt6m_hqla1_rehyp",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            10,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "clf_third_party_or_host_ala",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            10,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "self_securitised_clf",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            10,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "unencumbered_hqla2a",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            15,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "other_loan_fi_lt6m",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            15,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "unencumbered_hqla2b",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "hqla_enc_6m_to_lt1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "loans_fi_cb_6m_to_lt1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "op_deposits_other_adis",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "asx200_non_fi_equities",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "other_non_hqla_lt1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "std_res_mortgage_lvr_le80_ge1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            65,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "other_loans_non_fi_rw_le35_ge1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            65,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "initial_margin_ccp_default",
+                                                                                    ibis.ifelse(
+                                                                                        t[
+                                                                                            "on_behalf_of_customer_no_guarantee"
+                                                                                        ],
+                                                                                        ibis.literal(
+                                                                                            0,
+                                                                                            type="decimal(38, 12)",
+                                                                                        ),
+                                                                                        ibis.greatest(
+                                                                                            (
+                                                                                                ibis.literal(
+                                                                                                    85,
+                                                                                                    type="decimal(38, 12)",
+                                                                                                )
+                                                                                                / ibis.literal(
+                                                                                                    100,
+                                                                                                    type="decimal(38, 12)",
+                                                                                                )
+                                                                                            ),
+                                                                                            t[
+                                                                                                "custom_factor"
+                                                                                            ],
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "other_performing_loans_non_fi_ge1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            85,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "non_defaulted_sec_ge1y_eq",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            85,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "physical_traded_commodities",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            85,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "all_other_assets",
+                                                                                    ibis.literal(
+                                                                                        1,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                                else_=ibis.literal(
+                                                                                    1,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                    ),
+                                                                    (
+                                                                        t["encumbrance"]
+                                                                        == "one_year_or_more",
+                                                                        ibis.literal(
+                                                                            1,
+                                                                            type="decimal(38, 12)",
+                                                                        ),
+                                                                    ),
+                                                                    else_=ibis.literal(
+                                                                        1,
+                                                                        type="decimal(38, 12)",
+                                                                    ),
+                                                                ),
+                                                            ),
+                                                        )
+                                                        == (
+                                                            ibis.literal(
+                                                                10,
+                                                                type="decimal(38, 12)",
+                                                            )
+                                                            / ibis.literal(
+                                                                100,
+                                                                type="decimal(38, 12)",
+                                                            )
+                                                        )
+                                                    )
+                                                )
+                                            )
+                                        ).mutate(
+                                            val=lambda t: ibis.greatest(
+                                                t["carrying_value"],
+                                                ibis.literal(0, type="decimal(38, 12)"),
                                             )
                                         )
-                                        & t["on_behalf_of_customer_no_guarantee"]
-                                    )
-                                )
-                            ),
-                            ibis.literal(0, type="decimal(38, 12)"),
-                            ibis.ifelse(
-                                t["has_exceptional_cb_factor"],
-                                t["exceptional_cb_factor"],
-                                ibis.cases(
-                                    (
-                                        t["encumbrance"] == "unencumbered",
-                                        ibis.cases(
-                                            (
-                                                t["category"] == "notes_and_coins",
+                                    ).mutate(
+                                        fb=lambda t: ibis.ifelse(
+                                            t["has_excess_clf_fallback_override"],
+                                            ibis.greatest(
+                                                t["excess_clf_fallback_factor"],
                                                 ibis.literal(0, type="decimal(38, 12)"),
                                             ),
-                                            (
-                                                t["category"] == "cb_reserves_balances",
-                                                ibis.greatest(
-                                                    t["custom_factor"],
-                                                    ibis.literal(
-                                                        0, type="decimal(38, 12)"
-                                                    ),
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "cb_claims_lt6m",
-                                                ibis.literal(0, type="decimal(38, 12)"),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "trade_date_receivables",
-                                                ibis.literal(0, type="decimal(38, 12)"),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "unencumbered_hqla1_5pct",
-                                                (
-                                                    ibis.literal(
-                                                        5, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "loan_fi_lt6m_hqla1_rehyp",
-                                                (
-                                                    ibis.literal(
-                                                        10, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "clf_third_party_or_host_ala",
-                                                (
-                                                    ibis.literal(
-                                                        10, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "self_securitised_clf",
-                                                (
-                                                    ibis.literal(
-                                                        10, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "unencumbered_hqla2a",
-                                                (
-                                                    ibis.literal(
-                                                        15, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "other_loan_fi_lt6m",
-                                                (
-                                                    ibis.literal(
-                                                        15, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "unencumbered_hqla2b",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "hqla_enc_6m_to_lt1y",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "loans_fi_cb_6m_to_lt1y",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "op_deposits_other_adis",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "asx200_non_fi_equities",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "other_non_hqla_lt1y",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "std_res_mortgage_lvr_le80_ge1y",
-                                                (
-                                                    ibis.literal(
-                                                        65, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "other_loans_non_fi_rw_le35_ge1y",
-                                                (
-                                                    ibis.literal(
-                                                        65, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "initial_margin_ccp_default",
-                                                ibis.ifelse(
-                                                    t[
-                                                        "on_behalf_of_customer_no_guarantee"
-                                                    ],
-                                                    ibis.literal(
-                                                        0, type="decimal(38, 12)"
-                                                    ),
-                                                    ibis.greatest(
-                                                        (
-                                                            ibis.literal(
-                                                                85,
-                                                                type="decimal(38, 12)",
-                                                            )
-                                                            / ibis.literal(
-                                                                100,
-                                                                type="decimal(38, 12)",
-                                                            )
-                                                        ),
-                                                        t["custom_factor"],
-                                                    ),
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "other_performing_loans_non_fi_ge1y",
-                                                (
-                                                    ibis.literal(
-                                                        85, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "non_defaulted_sec_ge1y_eq",
-                                                (
-                                                    ibis.literal(
-                                                        85, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "physical_traded_commodities",
-                                                (
-                                                    ibis.literal(
-                                                        85, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "all_other_assets",
-                                                ibis.literal(1, type="decimal(38, 12)"),
-                                            ),
-                                            else_=ibis.literal(
-                                                1, type="decimal(38, 12)"
-                                            ),
-                                        ),
-                                    ),
-                                    (
-                                        t["encumbrance"] == "less_than_six_months",
-                                        ibis.cases(
-                                            (
-                                                t["category"] == "notes_and_coins",
-                                                ibis.literal(0, type="decimal(38, 12)"),
-                                            ),
-                                            (
-                                                t["category"] == "cb_reserves_balances",
-                                                ibis.greatest(
-                                                    t["custom_factor"],
-                                                    ibis.literal(
-                                                        0, type="decimal(38, 12)"
-                                                    ),
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "cb_claims_lt6m",
-                                                ibis.literal(0, type="decimal(38, 12)"),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "trade_date_receivables",
-                                                ibis.literal(0, type="decimal(38, 12)"),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "unencumbered_hqla1_5pct",
-                                                (
-                                                    ibis.literal(
-                                                        5, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "loan_fi_lt6m_hqla1_rehyp",
-                                                (
-                                                    ibis.literal(
-                                                        10, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "clf_third_party_or_host_ala",
-                                                (
-                                                    ibis.literal(
-                                                        10, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "self_securitised_clf",
-                                                (
-                                                    ibis.literal(
-                                                        10, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "unencumbered_hqla2a",
-                                                (
-                                                    ibis.literal(
-                                                        15, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "other_loan_fi_lt6m",
-                                                (
-                                                    ibis.literal(
-                                                        15, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "unencumbered_hqla2b",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "hqla_enc_6m_to_lt1y",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "loans_fi_cb_6m_to_lt1y",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "op_deposits_other_adis",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "asx200_non_fi_equities",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "other_non_hqla_lt1y",
-                                                (
-                                                    ibis.literal(
-                                                        50, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "std_res_mortgage_lvr_le80_ge1y",
-                                                (
-                                                    ibis.literal(
-                                                        65, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "other_loans_non_fi_rw_le35_ge1y",
-                                                (
-                                                    ibis.literal(
-                                                        65, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "initial_margin_ccp_default",
-                                                ibis.ifelse(
-                                                    t[
-                                                        "on_behalf_of_customer_no_guarantee"
-                                                    ],
-                                                    ibis.literal(
-                                                        0, type="decimal(38, 12)"
-                                                    ),
-                                                    ibis.greatest(
-                                                        (
-                                                            ibis.literal(
-                                                                85,
-                                                                type="decimal(38, 12)",
-                                                            )
-                                                            / ibis.literal(
-                                                                100,
-                                                                type="decimal(38, 12)",
-                                                            )
-                                                        ),
-                                                        t["custom_factor"],
-                                                    ),
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "other_performing_loans_non_fi_ge1y",
-                                                (
-                                                    ibis.literal(
-                                                        85, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "non_defaulted_sec_ge1y_eq",
-                                                (
-                                                    ibis.literal(
-                                                        85, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"]
-                                                == "physical_traded_commodities",
-                                                (
-                                                    ibis.literal(
-                                                        85, type="decimal(38, 12)"
-                                                    )
-                                                    / ibis.literal(
-                                                        100, type="decimal(38, 12)"
-                                                    )
-                                                ),
-                                            ),
-                                            (
-                                                t["category"] == "all_other_assets",
-                                                ibis.literal(1, type="decimal(38, 12)"),
-                                            ),
-                                            else_=ibis.literal(
-                                                1, type="decimal(38, 12)"
-                                            ),
-                                        ),
-                                    ),
-                                    (
-                                        t["encumbrance"]
-                                        == "six_months_to_less_than_one_year",
-                                        ibis.greatest(
                                             (
                                                 ibis.literal(50, type="decimal(38, 12)")
                                                 / ibis.literal(
                                                     100, type="decimal(38, 12)"
                                                 )
                                             ),
-                                            ibis.cases(
-                                                (
-                                                    t["category"] == "notes_and_coins",
-                                                    ibis.literal(
-                                                        0, type="decimal(38, 12)"
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "cb_reserves_balances",
-                                                    ibis.greatest(
-                                                        t["custom_factor"],
-                                                        ibis.literal(
-                                                            0, type="decimal(38, 12)"
-                                                        ),
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"] == "cb_claims_lt6m",
-                                                    ibis.literal(
-                                                        0, type="decimal(38, 12)"
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "trade_date_receivables",
-                                                    ibis.literal(
-                                                        0, type="decimal(38, 12)"
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "unencumbered_hqla1_5pct",
-                                                    (
-                                                        ibis.literal(
-                                                            5, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "loan_fi_lt6m_hqla1_rehyp",
-                                                    (
-                                                        ibis.literal(
-                                                            10, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "clf_third_party_or_host_ala",
-                                                    (
-                                                        ibis.literal(
-                                                            10, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "self_securitised_clf",
-                                                    (
-                                                        ibis.literal(
-                                                            10, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "unencumbered_hqla2a",
-                                                    (
-                                                        ibis.literal(
-                                                            15, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "other_loan_fi_lt6m",
-                                                    (
-                                                        ibis.literal(
-                                                            15, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "unencumbered_hqla2b",
-                                                    (
-                                                        ibis.literal(
-                                                            50, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "hqla_enc_6m_to_lt1y",
-                                                    (
-                                                        ibis.literal(
-                                                            50, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "loans_fi_cb_6m_to_lt1y",
-                                                    (
-                                                        ibis.literal(
-                                                            50, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "op_deposits_other_adis",
-                                                    (
-                                                        ibis.literal(
-                                                            50, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "asx200_non_fi_equities",
-                                                    (
-                                                        ibis.literal(
-                                                            50, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "other_non_hqla_lt1y",
-                                                    (
-                                                        ibis.literal(
-                                                            50, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "std_res_mortgage_lvr_le80_ge1y",
-                                                    (
-                                                        ibis.literal(
-                                                            65, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "other_loans_non_fi_rw_le35_ge1y",
-                                                    (
-                                                        ibis.literal(
-                                                            65, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "initial_margin_ccp_default",
-                                                    ibis.ifelse(
-                                                        t[
-                                                            "on_behalf_of_customer_no_guarantee"
-                                                        ],
-                                                        ibis.literal(
-                                                            0, type="decimal(38, 12)"
-                                                        ),
-                                                        ibis.greatest(
-                                                            (
-                                                                ibis.literal(
-                                                                    85,
-                                                                    type="decimal(38, 12)",
-                                                                )
-                                                                / ibis.literal(
-                                                                    100,
-                                                                    type="decimal(38, 12)",
-                                                                )
-                                                            ),
-                                                            t["custom_factor"],
-                                                        ),
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "other_performing_loans_non_fi_ge1y",
-                                                    (
-                                                        ibis.literal(
-                                                            85, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "non_defaulted_sec_ge1y_eq",
-                                                    (
-                                                        ibis.literal(
-                                                            85, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"]
-                                                    == "physical_traded_commodities",
-                                                    (
-                                                        ibis.literal(
-                                                            85, type="decimal(38, 12)"
-                                                        )
-                                                        / ibis.literal(
-                                                            100, type="decimal(38, 12)"
-                                                        )
-                                                    ),
-                                                ),
-                                                (
-                                                    t["category"] == "all_other_assets",
-                                                    ibis.literal(
-                                                        1, type="decimal(38, 12)"
-                                                    ),
-                                                ),
-                                                else_=ibis.literal(
-                                                    1, type="decimal(38, 12)"
-                                                ),
-                                            ),
+                                        )
+                                    )
+                                ).mutate(
+                                    cum_incl=lambda t: ibis.coalesce(
+                                        (t["val"])
+                                        .sum()
+                                        .over(
+                                            ibis.window(
+                                                order_by=[ibis.desc("fb")],
+                                                preceding=None,
+                                                following=0,
+                                            )
                                         ),
-                                    ),
-                                    (
-                                        t["encumbrance"] == "one_year_or_more",
-                                        ibis.literal(1, type="decimal(38, 12)"),
-                                    ),
-                                    else_=ibis.literal(1, type="decimal(38, 12)"),
-                                ),
-                            ),
+                                        ibis.literal(0, type="decimal(38, 12)"),
+                                    )
+                                )
+                            ).mutate(
+                                cum_prev=lambda t: ibis.greatest(
+                                    (t["cum_incl"] - t["val"]),
+                                    ibis.literal(0, type="decimal(38, 12)"),
+                                )
+                            )
+                        ).mutate(
+                            rem_before=lambda t: ibis.greatest(
+                                (clf_32a_lim - t["cum_prev"]),
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            )
                         )
-                        == (
+                    ).mutate(within=lambda t: ibis.least(t["val"], t["rem_before"]))
+                ).mutate(
+                    excess=lambda t: ibis.greatest(
+                        (t["val"] - t["within"]),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    )
+                )
+            ).mutate(
+                item_rsf=lambda t: (
+                    (
+                        (
                             ibis.literal(10, type="decimal(38, 12)")
                             / ibis.literal(100, type="decimal(38, 12)")
                         )
+                        * t["within"]
                     )
+                    + (t["fb"] * t["excess"])
                 )
             )
         )
-        .aggregate(
-            val=lambda t: (
-                ibis.greatest(
-                    t["carrying_value"], ibis.literal(0, type="decimal(38, 12)")
-                )
-            ).sum()
-        )["val"]
+        .aggregate(val=lambda t: (t["item_rsf"]).sum())["val"]
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),
     )
-    clf_lim = ibis.greatest(
-        recognised_clf_limit, ibis.literal(0, type="decimal(38, 12)")
-    )
-    clf_32a_lim = clf_lim + ibis.greatest(
-        host_ala_in_lcr_limit, ibis.literal(0, type="decimal(38, 12)")
-    )
-    elig_32a = ibis.least(total_32a, clf_32a_lim)
-    excess_32a = total_32a - elig_32a
-    rem_32a_lim = ibis.greatest(
-        (clf_32a_lim - total_32a), ibis.literal(0, type="decimal(38, 12)")
-    )
-    rem_lim = ibis.least(clf_lim, rem_32a_lim)
-    elig_32b = ibis.least(total_32b, rem_lim)
-    excess_32b = total_32b - elig_32b
-    capped_asset_rsf = non_clf_rsf + (
+    rsf_32b = ibis.coalesce(
         (
             (
-                ibis.literal(10, type="decimal(38, 12)")
-                / ibis.literal(100, type="decimal(38, 12)")
-            )
-            * (elig_32a + elig_32b)
-        )
-        + (
-            (
                 (
-                    ibis.literal(50, type="decimal(38, 12)")
-                    / ibis.literal(100, type="decimal(38, 12)")
+                    (
+                        (
+                            (
+                                (
+                                    (
+                                        (
+                                            (rsf_assets).filter(
+                                                lambda t: (
+                                                    (
+                                                        t["category"]
+                                                        == ibis.literal(
+                                                            "self_securitised_clf"
+                                                        )
+                                                    )
+                                                    & (
+                                                        ibis.ifelse(
+                                                            (
+                                                                t[
+                                                                    "is_interdependent_approved"
+                                                                ]
+                                                                | (
+                                                                    t[
+                                                                        "excluded_from_balance_sheet_rsf"
+                                                                    ]
+                                                                    | (
+                                                                        (
+                                                                            t[
+                                                                                "category"
+                                                                            ]
+                                                                            == ibis.literal(
+                                                                                "initial_margin_ccp_default"
+                                                                            )
+                                                                        )
+                                                                        & t[
+                                                                            "on_behalf_of_customer_no_guarantee"
+                                                                        ]
+                                                                    )
+                                                                )
+                                                            ),
+                                                            ibis.literal(
+                                                                0,
+                                                                type="decimal(38, 12)",
+                                                            ),
+                                                            ibis.ifelse(
+                                                                t[
+                                                                    "has_exceptional_cb_factor"
+                                                                ],
+                                                                t[
+                                                                    "exceptional_cb_factor"
+                                                                ],
+                                                                ibis.cases(
+                                                                    (
+                                                                        t["encumbrance"]
+                                                                        == "unencumbered",
+                                                                        ibis.cases(
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "notes_and_coins",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "cb_reserves_balances",
+                                                                                ibis.greatest(
+                                                                                    t[
+                                                                                        "custom_factor"
+                                                                                    ],
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "cb_claims_lt6m",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "trade_date_receivables",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla1_5pct",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        5,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "loan_fi_lt6m_hqla1_rehyp",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "clf_third_party_or_host_ala",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "self_securitised_clf",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla2a",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        15,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_loan_fi_lt6m",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        15,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla2b",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "hqla_enc_6m_to_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "loans_fi_cb_6m_to_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "op_deposits_other_adis",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "asx200_non_fi_equities",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_non_hqla_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "std_res_mortgage_lvr_le80_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        65,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_loans_non_fi_rw_le35_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        65,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "initial_margin_ccp_default",
+                                                                                ibis.ifelse(
+                                                                                    t[
+                                                                                        "on_behalf_of_customer_no_guarantee"
+                                                                                    ],
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                    ibis.greatest(
+                                                                                        (
+                                                                                            ibis.literal(
+                                                                                                85,
+                                                                                                type="decimal(38, 12)",
+                                                                                            )
+                                                                                            / ibis.literal(
+                                                                                                100,
+                                                                                                type="decimal(38, 12)",
+                                                                                            )
+                                                                                        ),
+                                                                                        t[
+                                                                                            "custom_factor"
+                                                                                        ],
+                                                                                    ),
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_performing_loans_non_fi_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "non_defaulted_sec_ge1y_eq",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "physical_traded_commodities",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "all_other_assets",
+                                                                                ibis.literal(
+                                                                                    1,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            else_=ibis.literal(
+                                                                                1,
+                                                                                type="decimal(38, 12)",
+                                                                            ),
+                                                                        ),
+                                                                    ),
+                                                                    (
+                                                                        t["encumbrance"]
+                                                                        == "less_than_six_months",
+                                                                        ibis.cases(
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "notes_and_coins",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "cb_reserves_balances",
+                                                                                ibis.greatest(
+                                                                                    t[
+                                                                                        "custom_factor"
+                                                                                    ],
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "cb_claims_lt6m",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "trade_date_receivables",
+                                                                                ibis.literal(
+                                                                                    0,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla1_5pct",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        5,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "loan_fi_lt6m_hqla1_rehyp",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "clf_third_party_or_host_ala",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "self_securitised_clf",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        10,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla2a",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        15,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_loan_fi_lt6m",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        15,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "unencumbered_hqla2b",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "hqla_enc_6m_to_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "loans_fi_cb_6m_to_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "op_deposits_other_adis",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "asx200_non_fi_equities",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_non_hqla_lt1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        50,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "std_res_mortgage_lvr_le80_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        65,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_loans_non_fi_rw_le35_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        65,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "initial_margin_ccp_default",
+                                                                                ibis.ifelse(
+                                                                                    t[
+                                                                                        "on_behalf_of_customer_no_guarantee"
+                                                                                    ],
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                    ibis.greatest(
+                                                                                        (
+                                                                                            ibis.literal(
+                                                                                                85,
+                                                                                                type="decimal(38, 12)",
+                                                                                            )
+                                                                                            / ibis.literal(
+                                                                                                100,
+                                                                                                type="decimal(38, 12)",
+                                                                                            )
+                                                                                        ),
+                                                                                        t[
+                                                                                            "custom_factor"
+                                                                                        ],
+                                                                                    ),
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "other_performing_loans_non_fi_ge1y",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "non_defaulted_sec_ge1y_eq",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "physical_traded_commodities",
+                                                                                (
+                                                                                    ibis.literal(
+                                                                                        85,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                    / ibis.literal(
+                                                                                        100,
+                                                                                        type="decimal(38, 12)",
+                                                                                    )
+                                                                                ),
+                                                                            ),
+                                                                            (
+                                                                                t[
+                                                                                    "category"
+                                                                                ]
+                                                                                == "all_other_assets",
+                                                                                ibis.literal(
+                                                                                    1,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                            else_=ibis.literal(
+                                                                                1,
+                                                                                type="decimal(38, 12)",
+                                                                            ),
+                                                                        ),
+                                                                    ),
+                                                                    (
+                                                                        t["encumbrance"]
+                                                                        == "six_months_to_less_than_one_year",
+                                                                        ibis.greatest(
+                                                                            (
+                                                                                ibis.literal(
+                                                                                    50,
+                                                                                    type="decimal(38, 12)",
+                                                                                )
+                                                                                / ibis.literal(
+                                                                                    100,
+                                                                                    type="decimal(38, 12)",
+                                                                                )
+                                                                            ),
+                                                                            ibis.cases(
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "notes_and_coins",
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "cb_reserves_balances",
+                                                                                    ibis.greatest(
+                                                                                        t[
+                                                                                            "custom_factor"
+                                                                                        ],
+                                                                                        ibis.literal(
+                                                                                            0,
+                                                                                            type="decimal(38, 12)",
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "cb_claims_lt6m",
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "trade_date_receivables",
+                                                                                    ibis.literal(
+                                                                                        0,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "unencumbered_hqla1_5pct",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            5,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "loan_fi_lt6m_hqla1_rehyp",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            10,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "clf_third_party_or_host_ala",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            10,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "self_securitised_clf",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            10,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "unencumbered_hqla2a",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            15,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "other_loan_fi_lt6m",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            15,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "unencumbered_hqla2b",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "hqla_enc_6m_to_lt1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "loans_fi_cb_6m_to_lt1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "op_deposits_other_adis",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "asx200_non_fi_equities",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "other_non_hqla_lt1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            50,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "std_res_mortgage_lvr_le80_ge1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            65,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "other_loans_non_fi_rw_le35_ge1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            65,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "initial_margin_ccp_default",
+                                                                                    ibis.ifelse(
+                                                                                        t[
+                                                                                            "on_behalf_of_customer_no_guarantee"
+                                                                                        ],
+                                                                                        ibis.literal(
+                                                                                            0,
+                                                                                            type="decimal(38, 12)",
+                                                                                        ),
+                                                                                        ibis.greatest(
+                                                                                            (
+                                                                                                ibis.literal(
+                                                                                                    85,
+                                                                                                    type="decimal(38, 12)",
+                                                                                                )
+                                                                                                / ibis.literal(
+                                                                                                    100,
+                                                                                                    type="decimal(38, 12)",
+                                                                                                )
+                                                                                            ),
+                                                                                            t[
+                                                                                                "custom_factor"
+                                                                                            ],
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "other_performing_loans_non_fi_ge1y",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            85,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "non_defaulted_sec_ge1y_eq",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            85,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "physical_traded_commodities",
+                                                                                    (
+                                                                                        ibis.literal(
+                                                                                            85,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                        / ibis.literal(
+                                                                                            100,
+                                                                                            type="decimal(38, 12)",
+                                                                                        )
+                                                                                    ),
+                                                                                ),
+                                                                                (
+                                                                                    t[
+                                                                                        "category"
+                                                                                    ]
+                                                                                    == "all_other_assets",
+                                                                                    ibis.literal(
+                                                                                        1,
+                                                                                        type="decimal(38, 12)",
+                                                                                    ),
+                                                                                ),
+                                                                                else_=ibis.literal(
+                                                                                    1,
+                                                                                    type="decimal(38, 12)",
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                    ),
+                                                                    (
+                                                                        t["encumbrance"]
+                                                                        == "one_year_or_more",
+                                                                        ibis.literal(
+                                                                            1,
+                                                                            type="decimal(38, 12)",
+                                                                        ),
+                                                                    ),
+                                                                    else_=ibis.literal(
+                                                                        1,
+                                                                        type="decimal(38, 12)",
+                                                                    ),
+                                                                ),
+                                                            ),
+                                                        )
+                                                        == (
+                                                            ibis.literal(
+                                                                10,
+                                                                type="decimal(38, 12)",
+                                                            )
+                                                            / ibis.literal(
+                                                                100,
+                                                                type="decimal(38, 12)",
+                                                            )
+                                                        )
+                                                    )
+                                                )
+                                            )
+                                        ).mutate(
+                                            val=lambda t: ibis.greatest(
+                                                t["carrying_value"],
+                                                ibis.literal(0, type="decimal(38, 12)"),
+                                            )
+                                        )
+                                    ).mutate(
+                                        fb=lambda t: ibis.ifelse(
+                                            t["has_excess_clf_fallback_override"],
+                                            ibis.greatest(
+                                                t["excess_clf_fallback_factor"],
+                                                ibis.literal(0, type="decimal(38, 12)"),
+                                            ),
+                                            (
+                                                ibis.literal(85, type="decimal(38, 12)")
+                                                / ibis.literal(
+                                                    100, type="decimal(38, 12)"
+                                                )
+                                            ),
+                                        )
+                                    )
+                                ).mutate(
+                                    cum_incl=lambda t: ibis.coalesce(
+                                        (t["val"])
+                                        .sum()
+                                        .over(
+                                            ibis.window(
+                                                order_by=[ibis.desc("fb")],
+                                                preceding=None,
+                                                following=0,
+                                            )
+                                        ),
+                                        ibis.literal(0, type="decimal(38, 12)"),
+                                    )
+                                )
+                            ).mutate(
+                                cum_prev=lambda t: ibis.greatest(
+                                    (t["cum_incl"] - t["val"]),
+                                    ibis.literal(0, type="decimal(38, 12)"),
+                                )
+                            )
+                        ).mutate(
+                            rem_before=lambda t: ibis.greatest(
+                                (rem_lim - t["cum_prev"]),
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            )
+                        )
+                    ).mutate(within=lambda t: ibis.least(t["val"], t["rem_before"]))
+                ).mutate(
+                    excess=lambda t: ibis.greatest(
+                        (t["val"] - t["within"]),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    )
                 )
-                * excess_32a
-            )
-            + (
-                (
-                    ibis.literal(85, type="decimal(38, 12)")
-                    / ibis.literal(100, type="decimal(38, 12)")
+            ).mutate(
+                item_rsf=lambda t: (
+                    (
+                        (
+                            ibis.literal(10, type="decimal(38, 12)")
+                            / ibis.literal(100, type="decimal(38, 12)")
+                        )
+                        * t["within"]
+                    )
+                    + (t["fb"] * t["excess"])
                 )
-                * excess_32b
             )
         )
+        .aggregate(val=lambda t: (t["item_rsf"]).sum())["val"]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
     )
-    asset_rsf = ibis.ifelse(has_clf_limit, capped_asset_rsf, raw_asset_rsf)
+    asset_rsf = non_clf_rsf + (rsf_32a + rsf_32b)
     obs_rsf = ibis.coalesce(
         (obs_exposures)
         .aggregate(

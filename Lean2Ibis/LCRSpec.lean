@@ -147,9 +147,10 @@ def retailOutflowExpr : SExpr :=
     .binOp .add
       (.binOp .mul (.binOp .min bal lim) (.litRat 5 100))
       (.binOp .mul (.unOp .nonNeg (.binOp .sub bal lim)) excessRate)
-  let excludedTerm := .binOp .and (.col "residual_maturity_or_notice_gt_30d")
-    (.binOp .and (.col "no_withdrawal_right_or_material_penalty")
-      (.unOp .not (.col "category_tainted_by_early_withdrawal")))
+  let excludedTerm := .binOp .and (.unOp .not (.col "notice_deposit_called"))
+    (.binOp .and (.col "residual_maturity_or_notice_gt_30d")
+      (.binOp .and (.col "no_withdrawal_right_or_material_penalty")
+        (.unOp .not (.col "category_tainted_by_early_withdrawal"))))
   .ite (.binOp .and (.col "is_intermediated") (.unOp .not (.col "intermediated_look_through_met")))
     (.ite excludedTerm (.litRat 0 1) bal)
     (.ite (.col "notice_deposit_called")

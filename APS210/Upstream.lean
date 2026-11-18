@@ -218,8 +218,10 @@ private def yearMonthOfEpoch (d : EpochDate) : Int :=
   let (y, m, _) := civilFromEpoch d
   y * 100 + (m : Int)
 
-/-- Calendar-date 30-day rolling collateral lookback over trailing 24 months,
-    plus lookback coverage validation: must span back >= 23 months AND cover >= 24 distinct `(year, month)` buckets. -/
+/-- Calendar-date 30-day rolling collateral lookback over trailing 24 months.
+    Input contract: missing calendar dates represent zero net collateral flow on that date;
+    lookback validation requires non-empty flows spanning back `<= reportingDate - 23m`
+    and covering `>= 24` distinct `(year, month)` buckets. -/
 def max30dCollateralOutflowCal (reportingDate : EpochDate) (flows : List DailyCollateralFlow) : Money × Bool :=
   let lookback24m := addMonthsEpoch reportingDate (-24)
   let lookback23m := addMonthsEpoch reportingDate (-23)

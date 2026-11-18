@@ -27,6 +27,8 @@ RSF_SCHEMA = ibis.schema(
         "exceptional_cb_factor": "decimal(38, 12)",
         "is_interdependent_approved": "boolean",
         "excluded_from_balance_sheet_rsf": "boolean",
+        "has_excess_clf_fallback_override": "boolean",
+        "excess_clf_fallback_factor": "decimal(38, 12)",
     }
 )
 
@@ -65,6 +67,8 @@ def main():
                     Decimal(0),
                     False,
                     False,
+                    False,
+                    Decimal(0),
                 ),
                 (
                     "unencumbered_hqla1_5pct",
@@ -76,6 +80,8 @@ def main():
                     Decimal(0),
                     False,
                     False,
+                    False,
+                    Decimal(0),
                 ),
                 (
                     "initial_margin_ccp_default",
@@ -87,6 +93,8 @@ def main():
                     Decimal(0),
                     False,
                     False,
+                    False,
+                    Decimal(0),
                 ),
                 (
                     "clf_third_party_or_host_ala",
@@ -98,6 +106,8 @@ def main():
                     Decimal(0),
                     False,
                     False,
+                    False,
+                    Decimal(0),
                 ),
                 (
                     "self_securitised_clf",
@@ -109,6 +119,8 @@ def main():
                     Decimal(0),
                     False,
                     False,
+                    False,
+                    Decimal(0),
                 ),
             ],
             columns=list(RSF_SCHEMA.names),
@@ -146,6 +158,50 @@ def main():
     assert Decimal(nsfr_res["total_rsf"]) == Decimal("83.25"), nsfr_res
     assert bool(nsfr_res["compliant"]) is True, nsfr_res
     print("PASS nsfr_clf_cap_and_derivatives:", nsfr_res)
+
+    # 1b. NSFR with has_clf_limit=False -> treats CLF limit as 0 (50% excess RSF, not 10%)
+    #     + greedy custom excess_clf_fallback_factor allocation
+    rsf_no_clf = ibis.memtable(
+        pd.DataFrame(
+            [
+                (
+                    "clf_third_party_or_host_ala",
+                    Decimal(100),
+                    "unencumbered",
+                    Decimal(0),
+                    False,
+                    False,
+                    Decimal(0),
+                    False,
+                    False,
+                    False,
+                    Decimal(0),
+                ),
+            ],
+            columns=list(RSF_SCHEMA.names),
+        ),
+        schema=RSF_SCHEMA,
+    )
+    nsfr_no_clf_res = {
+        k: con.execute(v)
+        for k, v in evaluate_nsfr(
+            asf_tbl,
+            rsf_no_clf,
+            obs_tbl,
+            required_min_rate=Decimal("1.00"),
+            gross_deriv_liabilities=Decimal(0),
+            variation_margin_posted=Decimal(0),
+            gross_deriv_assets=Decimal(0),
+            eligible_cash_vm_received=Decimal(0),
+            has_clf_limit=False,
+            recognised_clf_limit=Decimal(999),
+            host_ala_in_lcr_limit=Decimal(0),
+        ).items()
+    }
+    assert Decimal(nsfr_no_clf_res["total_rsf"]) == Decimal(56), (
+        nsfr_no_clf_res
+    )  # 50 + 6 obs
+    print("PASS nsfr_missing_clf_limit_uses_zero:", nsfr_no_clf_res)
 
     # 2. External standards rules
     ext_res = {

@@ -358,6 +358,53 @@ def main():
     assert bool(res3["compliant"]) is True, res3
     print("PASS lcr_500k_fcs_split_and_l2_cap:", res3)
 
+    # Case 4: Called intermediated notice deposit with failed look-through -> $100 outflow (not $0)
+    hqla4, retail4, outf4, inf4 = make_tables(
+        con,
+        hqla=[],
+        retail=[
+            (
+                "AUD",
+                Decimal(100),
+                Decimal(250000),
+                True,  # is_intermediated
+                False,  # intermediated_look_through_met = False
+                True,  # notice_deposit_called = True
+                True,  # residual_maturity_or_notice_gt_30d
+                True,  # no_withdrawal_right_or_material_penalty
+                False,  # category_tainted_by_early_withdrawal
+                False,
+                Decimal(0),
+                True,
+                False,
+                False,
+                False,
+                False,
+            ),
+        ],
+        outflows=[],
+        inflows=[],
+    )
+    res4 = {
+        k: con.execute(v)
+        for k, v in evaluate_lcr(
+            hqla4,
+            retail4,
+            outf4,
+            inf4,
+            is_aud_only=False,
+            is_level2=False,
+            required_min_rate=Decimal("1.00"),
+            delta_hqla1=Decimal(0),
+            delta_hqla2a=Decimal(0),
+            delta_hqla2b=Decimal(0),
+            clf_recognised=Decimal(0),
+            foreign_ho_facility_eligible=Decimal(0),
+        ).items()
+    }
+    assert Decimal(res4["gross_outflows"]) == Decimal(100), res4
+    print("PASS lcr_called_intermediated_deposit:", res4)
+
 
 if __name__ == "__main__":
     main()

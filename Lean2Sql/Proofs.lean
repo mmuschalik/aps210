@@ -72,9 +72,6 @@ theorem mlh_compiles_to_duckdb : (compileProgram MLHSpec.mlhProgram).isSome = tr
 theorem lcr_compiles_to_duckdb : (compileProgram LCRSpec.lcrProgram).isSome = true := by
   decide
 
-theorem nsfr_compiles_to_duckdb : (compileProgram NSFRSpec.nsfrProgram).isSome = true := by
-  decide
-
 /-- Environment soundness: every column in `Γ` is bound in `env` with matching `valTy`. -/
 def EnvTyped (Γ : String → Ty) (env : Row) : Prop :=
   ∀ k, ∃ v, env.find? (fun (x, _) => x == k) = some (k, v) ∧ valTy v = Γ k

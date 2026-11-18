@@ -203,6 +203,25 @@ def splitAmortisingLoanForRsf
   [ { id := idPrefix ++ "-lt1y", category := lt1yCat, carryingValue := lt1yAmt, encumbrance, isInterdependentApproved }
   , { id := idPrefix ++ "-ge1y", category := ge1yCat, carryingValue := ge1yAmt, encumbrance, isInterdependentApproved } ]
 
+/-- Calendar-mandatory variant of `splitLiabilityCashFlowsForAsf` requiring `reportingDate`. -/
+def splitLiabilityCashFlowsForAsfCal
+    (reportingDate : Upstream.EpochDate)
+    (idPrefix : String)
+    (lt6mCat sixTo1yCat ge1yCat : NSFR.AsfCategory)
+    (legs : List (Money × Nat))
+    (isInterdependentApproved : Bool := false) : List NSFR.AsfItem :=
+  splitLiabilityCashFlowsForAsf idPrefix lt6mCat sixTo1yCat ge1yCat legs isInterdependentApproved (some reportingDate)
+
+/-- Calendar-mandatory variant of `splitAmortisingLoanForRsf` requiring `reportingDate`. -/
+def splitAmortisingLoanForRsfCal
+    (reportingDate : Upstream.EpochDate)
+    (idPrefix : String)
+    (lt1yCat ge1yCat : NSFR.RsfCategory)
+    (legs : List (Money × Nat))
+    (encumbrance : NSFR.EncumbrancePeriod := .unencumbered)
+    (isInterdependentApproved : Bool := false) : List NSFR.RsfAssetItem :=
+  splitAmortisingLoanForRsf idPrefix lt1yCat ge1yCat legs encumbrance isInterdependentApproved (some reportingDate)
+
 -- ============================================================================
 -- LCR 30-Day Derivative Cash-Flow Netting & Portfolio Derivation (Att A fn 5, 8)
 -- ============================================================================
