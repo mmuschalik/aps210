@@ -1,0 +1,15 @@
+# Regulatory PDFs (excluded per request)
+*.pdf
+
+# Lean build artifacts
+.lake/
+
+# Python / tooling caches
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+
+# OS / scratch
+.DS_Store
+test.excalidraw

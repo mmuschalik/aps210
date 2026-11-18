@@ -1,0 +1,20 @@
+name = "aps210"
+version = "0.1.0"
+defaultTargets = ["APS210", "Lean2Ibis", "Lean2Sql", "lean2ibis"]
+
+[[lean_lib]]
+name = "APS210"
+
+[[lean_lib]]
+name = "Lean2Ibis"
+
+[[lean_lib]]
+name = "Lean2Sql"
+
+[[lean_exe]]
+name = "lean2ibis"
+root = "Lean2Ibis.Main"
+
+[[lean_exe]]
+name = "eval_upstream"
+root = "Lean2Ibis.EvalUpstreamCli"
