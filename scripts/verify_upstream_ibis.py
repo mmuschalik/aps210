@@ -37,6 +37,13 @@ def main() -> None:
                 datetime.date(2026, 7, 5),
             ],
             "has_call_option": [False, True, False, False],
+            "latest_extension_date": [
+                datetime.date(2026, 7, 15),
+                datetime.date(2027, 7, 15),
+                datetime.date(2027, 1, 15),
+                datetime.date(2026, 7, 5),
+            ],
+            "has_extension_option": [False, False, False, False],
             "notice_days": [Decimal("0"), Decimal("0"), Decimal("0"), Decimal("400")],
             "encumbrance_end_date": [
                 datetime.date(2026, 6, 30),
@@ -108,6 +115,43 @@ def main() -> None:
         {"month_end_date": month_dates, "net_cash_outflow": month_vals}
     )
 
+    # 7. ECAI letter-to-grade + multiple assessments
+    # e1: A+ -> grade 2
+    # e2: AAA, BBB- -> worse = grade 3
+    # e3: AA+, A, below_bbb_minus -> 2nd best = grade 2
+    # e4: unrated -> excluded
+    ecai_assessments = ibis.memtable(
+        {
+            "exposure_id": ["e1", "e2", "e2", "e3", "e3", "e3", "e4"],
+            "rating_str": ["A+", "AAA", "BBB-", "AA+", "A", "below_bbb_minus", "unrated"],
+        }
+    )
+
+    # 8. Amortisation cashflows (L1 split across <6m, 6m..1y, >=1y)
+    amortisation_cashflows = ibis.memtable(
+        {
+            "loan_id": ["L1", "L1", "L1"],
+            "payment_date": [
+                datetime.date(2026, 9, 1),
+                datetime.date(2027, 3, 1),
+                datetime.date(2028, 6, 30),
+            ],
+            "principal_amount": [Decimal("50"), Decimal("75"), Decimal("125")],
+        }
+    )
+
+    # 9. SFT unwinds & 3-way CLF bound
+    sft_legs = ibis.memtable(
+        {
+            "leg_id": ["s1", "s2", "s3"],
+            "meets_operational_reqs": [True, True, False],
+            "netting_eligible": [True, False, True],
+            "hqla1_delta": [Decimal("20"), Decimal("15"), Decimal("100")],
+            "hqla2a_delta": [Decimal("-5"), Decimal("-10"), Decimal("0")],
+            "hqla2b_delta": [Decimal("0"), Decimal("3"), Decimal("0")],
+        }
+    )
+
     exprs = evaluate_aps210_upstream(
         positions,
         derivative_trades,
@@ -115,7 +159,15 @@ def main() -> None:
         ccy_hqla1_positions,
         daily_collateral_flows,
         monthly_net_outflows,
+        ecai_assessments,
+        amortisation_cashflows,
+        sft_legs,
         reporting_date,
+        True,
+        Decimal("500"),
+        Decimal("80"),
+        Decimal("20"),
+        Decimal("460"),
     )
 
     results = {k: Decimal(str(con.execute(v))) for k, v in exprs.items()}
@@ -133,6 +185,15 @@ def main() -> None:
         "capped_foreign_sov_hqla1": Decimal("140"),
         "max_30d_collateral_outflow": Decimal("75"),
         "avg_12m_net_outflow": Decimal("155"),
+        "ecai_resolved_grade_sum": Decimal("7"),
+        "ecai_investment_grade_count": Decimal("3"),
+        "amort_nsfr_lt_6m_amt": Decimal("50"),
+        "amort_nsfr_6m_to_1y_amt": Decimal("75"),
+        "amort_nsfr_ge_1y_amt": Decimal("125"),
+        "sft_unwind_hqla1": Decimal("20"),
+        "sft_unwind_hqla2a": Decimal("-15"),
+        "sft_unwind_hqla2b": Decimal("0"),
+        "clf_recognised_amount": Decimal("440"),
     }
 
     for k, exp in expected.items():
@@ -140,7 +201,7 @@ def main() -> None:
         assert got == exp, f"Mismatch for {k}: got {got}, expected {exp}"
         print(f"  OK  {k:30s} = {got}")
 
-    print("ALL 13 UPSTREAM IBIS/DUCKDB CHECKS PASSED!")
+    print(f"ALL {len(expected)} UPSTREAM IBIS/DUCKDB CHECKS PASSED!")
 
 
 if __name__ == "__main__":

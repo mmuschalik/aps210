@@ -1,4 +1,6 @@
 import APS210.Basic
+import APS210.ExternalStandards
+import APS210.LCR.HQLA
 
 namespace APS210.Upstream
 
@@ -32,13 +34,17 @@ structure PositionRow where
   maturityDate : EpochDate
   earliestCallDate : EpochDate
   hasCallOption : Bool
+  latestExtensionDate : EpochDate := 0
+  hasExtensionOption : Bool := false
   noticeDays : Rat
   encumbranceEndDate : EpochDate
   isEncumbered : Bool
   deriving DecidableEq, Repr
 
 def PositionRow.effectiveMaturityDate (p : PositionRow) : EpochDate :=
-  if p.hasCallOption then p.earliestCallDate else p.maturityDate
+  if p.hasCallOption then p.earliestCallDate
+  else if p.hasExtensionOption then p.latestExtensionDate
+  else p.maturityDate
 
 def PositionRow.residualDays (reportingDate : EpochDate) (p : PositionRow) : Rat :=
   max p.noticeDays ((p.effectiveMaturityDate - reportingDate : Int) : Rat)
@@ -188,6 +194,94 @@ def avg12mNetOutflow (months : List MonthlyNetOutflow) : Money :=
   else sumBy months (·.netCashOutflow) / (months.length : Rat)
 
 -- ============================================================================
+-- 7. ECAI Letter-to-Grade Mapping & Multiple Assessment Resolution (APS 112 Att F)
+-- ============================================================================
+
+structure EcaiAssessmentRow where
+  exposureId : String
+  ratingStr : String
+  deriving DecidableEq, Repr
+
+def parseCreditRatingStr : String → CreditRating
+  | "AAA" => .aaa
+  | "AA+" => .aaPlus
+  | "AA" => .aa
+  | "AA-" => .aaMinus
+  | "A+" => .aPlus
+  | "A" => .a
+  | "A-" => .aMinus
+  | "BBB+" => .bbbPlus
+  | "BBB" => .bbb
+  | "BBB-" => .bbbMinus
+  | "below_bbb_minus" => .belowBbbMinus
+  | _ => .unrated
+
+def resolveEcaiByExposure (rows : List EcaiAssessmentRow) : List (String × External.CreditRatingGrade) :=
+  let rated := rows.filter (fun r => External.CreditRatingGrade.ofCreditRating (parseCreditRatingStr r.ratingStr) != .unrated)
+  let groups := groupByKey (·.exposureId) rated
+  groups.map (fun (eid, grp) =>
+    let grades := grp.map (fun r => External.CreditRatingGrade.ofCreditRating (parseCreditRatingStr r.ratingStr))
+    (eid, External.resolveMultipleEcaiAssessments grades))
+
+-- ============================================================================
+-- 8. Amortising Cash-Flow Schedules (Attachment C NSFR Bucketing)
+-- ============================================================================
+
+structure AmortisationCashflowRow where
+  loanId : String
+  paymentDate : EpochDate
+  principalAmount : Money
+  deriving DecidableEq, Repr
+
+-- ============================================================================
+-- 9. LCR SFT Unwinds & 3-Way CLF Bound (Attachment A Paras 8, 15-21)
+-- ============================================================================
+
+structure SftLegRow where
+  legId : String
+  meetsOperationalReqs : Bool
+  nettingEligible : Bool
+  hqla1Delta : Money
+  hqla2aDelta : Money
+  hqla2bDelta : Money
+  deriving DecidableEq, Repr
+
+def SftLegRow.toLcrLeg (s : SftLegRow) : LCR.ShortTermSftLeg :=
+  { hqla1Delta := s.hqla1Delta
+  , hqla2aDelta := s.hqla2aDelta
+  , hqla2bDelta := s.hqla2bDelta
+  , meetsOperationalReqs := s.meetsOperationalReqs
+  , nettingCriteria := some
+      { sameCounterparty := s.nettingEligible
+      , sameExplicitFinalSettlementDate := s.nettingEligible
+      , legallyEnforceableNettingNormalAndDefault := s.nettingEligible
+      , settledNetOrSimultaneously := s.nettingEligible
+      }
+  }
+
+structure ClfSummaryInput where
+  eligible : Bool := false
+  contractualAmount : Money := 0
+  pledgedZeroRunoff : Money := 0
+  receivedZeroInflow : Money := 0
+  collateralAfterMargin : Money := 0
+  deriving DecidableEq, Repr
+
+def ClfSummaryInput.recognised (c : ClfSummaryInput) : Money :=
+  let clf : LCR.ClfInput :=
+    { approvedByApra := c.eligible
+    , contractualAmount := c.contractualAmount
+    , pledgedUnderZeroRunoffSecFunding := c.pledgedZeroRunoff
+    , receivedUnderZeroInflowSecLending := c.receivedZeroInflow
+    , collateralHeldAfterRbaMargins := c.collateralAfterMargin
+    , collateralDiversified := c.eligible
+    , annualReapprovalCurrent := c.eligible
+    , includedInFundingStrategy := c.eligible
+    , balanceSheetEffortsExhausted := c.eligible
+    }
+  clf.recognisedAmount
+
+-- ============================================================================
 -- Unified Upstream Evaluation & Compliance Properties
 -- ============================================================================
 
@@ -199,6 +293,10 @@ structure UpstreamInput where
   ccyHqla1Positions : List CcyHqla1Position
   dailyCollateralFlows : List DailyCollateralFlow
   monthlyNetOutflows : List MonthlyNetOutflow
+  ecaiAssessments : List EcaiAssessmentRow := []
+  amortisationCashflows : List AmortisationCashflowRow := []
+  sftLegs : List SftLegRow := []
+  clf : ClfSummaryInput := {}
   deriving DecidableEq, Repr
 
 structure UpstreamResult where
@@ -215,6 +313,15 @@ structure UpstreamResult where
   cappedForeignSovHqla1 : Money
   max30dCollateralOutflow : Money
   avg12mNetOutflow : Money
+  ecaiResolvedGradeSum : Rat
+  ecaiInvestmentGradeCount : Rat
+  amortNsfrLt6mAmt : Money
+  amortNsfr6mTo1yAmt : Money
+  amortNsfrGe1yAmt : Money
+  sftUnwindHqla1 : Money
+  sftUnwindHqla2a : Money
+  sftUnwindHqla2b : Money
+  clfRecognisedAmount : Money
   deriving DecidableEq, Repr
 
 def evaluateUpstream (input : UpstreamInput) : UpstreamResult :=
@@ -225,6 +332,12 @@ def evaluateUpstream (input : UpstreamInput) : UpstreamResult :=
   let encGe1y := sumBy (input.positions.filter (fun p => p.isEncumbered && p.encumbranceDays input.reportingDate ≥ 365)) (·.amount)
   let (dOut, dIn) := netDerivativeOutflowInflow input.derivativeTrades
   let dep := evaluateDeposits input.depositAccounts
+  let ecaiResolved := resolveEcaiByExposure input.ecaiAssessments
+  let amortDays (c : AmortisationCashflowRow) : Rat := ((c.paymentDate - input.reportingDate : Int) : Rat)
+  let amortLt6m := sumBy (input.amortisationCashflows.filter (fun c => classifyNsfrBucket (amortDays c) == .lt6m)) (·.principalAmount)
+  let amort6mTo1y := sumBy (input.amortisationCashflows.filter (fun c => classifyNsfrBucket (amortDays c) == .sixMTo1y)) (·.principalAmount)
+  let amortGe1y := sumBy (input.amortisationCashflows.filter (fun c => classifyNsfrBucket (amortDays c) == .ge1y)) (·.principalAmount)
+  let unwind := LCR.computeUnwindAdjustments (input.sftLegs.map SftLegRow.toLcrLeg)
   { posLcrWithin30dAmt := lcr30d
   , posNsfrLt6mAmt := nsfrLt6m
   , posNsfr6mTo1yAmt := nsfr6mTo1y
@@ -238,6 +351,15 @@ def evaluateUpstream (input : UpstreamInput) : UpstreamResult :=
   , cappedForeignSovHqla1 := cappedForeignSovHqla1 input.ccyHqla1Positions
   , max30dCollateralOutflow := max30dCollateralOutflow input.dailyCollateralFlows
   , avg12mNetOutflow := avg12mNetOutflow input.monthlyNetOutflows
+  , ecaiResolvedGradeSum := sumBy ecaiResolved (fun (_, g) => (g.rank : Rat))
+  , ecaiInvestmentGradeCount := ((ecaiResolved.filter (fun (_, g) => g.rank ≤ 3)).length : Rat)
+  , amortNsfrLt6mAmt := amortLt6m
+  , amortNsfr6mTo1yAmt := amort6mTo1y
+  , amortNsfrGe1yAmt := amortGe1y
+  , sftUnwindHqla1 := unwind.deltaHqla1
+  , sftUnwindHqla2a := unwind.deltaHqla2a
+  , sftUnwindHqla2b := unwind.deltaHqla2b
+  , clfRecognisedAmount := input.clf.recognised
   }
 
 /-- Every `PositionRow` is assigned to a unique NSFR maturity bucket. -/

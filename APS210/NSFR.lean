@@ -261,6 +261,58 @@ structure ObsExposureItem where
 def ObsExposureItem.weightedAmount (item : ObsExposureItem) : Money :=
   nonNeg item.amount * item.category.factor
 
+/-- Attachment C, Paragraphs 9 & 27: Individual derivative contract or netting-set leg
+    for computing gross derivative assets and liabilities under eligible bilateral netting. -/
+structure DerivativeContractMtM where
+  nettingSetId : String
+  mtm : Rat
+  bilateralNetting : Option External.BilateralNettingAgreement := none
+  deriving DecidableEq, Repr
+
+private def insertMtMGroup (key : String) (x : DerivativeContractMtM) :
+    List (String × List DerivativeContractMtM) → List (String × List DerivativeContractMtM)
+  | [] => [(key, [x])]
+  | (k, xs) :: rest =>
+    if k == key then (k, xs ++ [x]) :: rest
+    else (k, xs) :: insertMtMGroup key x rest
+
+/-- Attachment C, Paragraphs 9 & 27: Aggregate individual derivative contract MtMs into
+    `(grossDerivativeAssets, grossDerivativeLiabilities)`.
+    Contracts in a netting set whose `BilateralNettingAgreement.isEligible = true`
+    (all legs) are netted to a single net replacement cost; otherwise positive and negative
+    replacement costs are summed gross without cross-contract netting. -/
+def computeNettedDerivativeTotals (contracts : List DerivativeContractMtM) : Money × Money :=
+  let groups := contracts.foldl (fun acc c => insertMtMGroup c.nettingSetId c acc) []
+  groups.foldl (fun (accAssets, accLiabs) (_, grp) =>
+    let allEligible := grp.all (fun c =>
+      match c.bilateralNetting with
+      | some b => b.isEligible
+      | none => false)
+    if allEligible then
+      let netRc := sumBy grp (·.mtm)
+      if netRc >= 0 then (accAssets + netRc, accLiabs)
+      else (accAssets, accLiabs + (-netRc))
+    else
+      let posSum := sumBy grp (fun c => nonNeg c.mtm)
+      let negSum := sumBy grp (fun c => nonNeg (-c.mtm))
+      (accAssets + posSum, accLiabs + negSum)
+  ) (0, 0)
+
+/-- Attachment C, Paragraph 26 & APS 110 Attachment D Paragraph 38:
+    Net SFT cash receivables and payables with a single counterparty only when
+    `SftNettingCriteria.isEligible` holds; otherwise treat receivable gross. -/
+structure NsfrSftNettingGroup where
+  receivable : Money
+  payable : Money
+  nettingCriteria : External.SftNettingCriteria
+  deriving DecidableEq, Repr
+
+def NsfrSftNettingGroup.netNsfrReceivable (g : NsfrSftNettingGroup) : Money :=
+  if g.nettingCriteria.isEligible then
+    nonNeg (nonNeg g.receivable - nonNeg g.payable)
+  else
+    nonNeg g.receivable
+
 /-- Attachment C, Paragraphs 9–10, 15(c), 27–28, 37(b), 37(d): Derivative inputs for NSFR. -/
 structure NsfrDerivativeInput where
   /-- Para 9: Sum of negative replacement costs (after eligible bilateral netting). -/
@@ -271,35 +323,39 @@ structure NsfrDerivativeInput where
   grossDerivativeAssets : Money := 0
   /-- Para 28: Cash variation margin received meeting APS 110 Att D para 23 in same settlement currency. -/
   eligibleCashVariationMarginReceived : Money := 0
-  /-- Optional APS 110 Att D bilateral netting eligibility check. -/
-  bilateralNetting : Option External.BilateralNettingAgreement := none
+  /-- Optional contract-level MtM legs for Paras 9 & 27 bilateral netting calculation. -/
+  contracts : List DerivativeContractMtM := []
   /-- Optional APS 110 Att D para 23 cash variation margin eligibility check. -/
   cashVmReceivedEligibility : Option External.CashVariationMarginEligibility := none
   deriving DecidableEq, Repr
 
+private def NsfrDerivativeInput.effectiveGrossAssets (d : NsfrDerivativeInput) : Money :=
+  if d.contracts.isEmpty then nonNeg d.grossDerivativeAssets
+  else (computeNettedDerivativeTotals d.contracts).1
+
+private def NsfrDerivativeInput.effectiveGrossLiabilities (d : NsfrDerivativeInput) : Money :=
+  if d.contracts.isEmpty then nonNeg d.grossDerivativeLiabilities
+  else (computeNettedDerivativeTotals d.contracts).2
+
 def NsfrDerivativeInput.nsfrDerivativeLiabilities (d : NsfrDerivativeInput) : Money :=
-  nonNeg (nonNeg d.grossDerivativeLiabilities - nonNeg d.variationMarginPosted)
+  nonNeg (d.effectiveGrossLiabilities - nonNeg d.variationMarginPosted)
 
 def NsfrDerivativeInput.nsfrDerivativeAssets (d : NsfrDerivativeInput) : Money :=
   let vmOk := match d.cashVmReceivedEligibility with
     | some vm => vm.isEligibleForNsfrOffset
     | none => true
   let vmAmt := if vmOk then nonNeg d.eligibleCashVariationMarginReceived else 0
-  nonNeg (nonNeg d.grossDerivativeAssets - vmAmt)
+  nonNeg (d.effectiveGrossAssets - vmAmt)
 
-/-- Para 37(b): `100% * MAX(NSFR derivative assets - NSFR derivative liabilities, 0)`.
-    If `bilateralNetting = some b` and `!b.isEligible`, derivative liabilities cannot offset
-    derivative assets across contracts. -/
+/-- Para 37(b) & fn 29: `100% * MAX(NSFR derivative assets - NSFR derivative liabilities, 0)`.
+    Bilateral netting eligibility (Paras 9 & 27) governs contract-level replacement cost netting
+    in `contracts`, never disabling the aggregate Para 37(b) offset. -/
 def NsfrDerivativeInput.netDerivativeRsf (d : NsfrDerivativeInput) : Money :=
-  let nettingOk := match d.bilateralNetting with
-    | some b => b.isEligible
-    | none => true
-  if nettingOk then nonNeg (d.nsfrDerivativeAssets - d.nsfrDerivativeLiabilities)
-  else d.nsfrDerivativeAssets
+  nonNeg (d.nsfrDerivativeAssets - d.nsfrDerivativeLiabilities)
 
 /-- Para 37(d) & fn 20: `20% * gross derivative liabilities` (before variation margin deduction). -/
 def NsfrDerivativeInput.derivativeLiabilityAddOnRsf (d : NsfrDerivativeInput) : Money :=
-  pct 20 * nonNeg d.grossDerivativeLiabilities
+  pct 20 * d.effectiveGrossLiabilities
 
 /-- Full inputs for Attachment C NSFR calculation. -/
 structure NsfrInput where
@@ -312,6 +368,9 @@ structure NsfrInput where
       Standalone `evaluateNsfr` treats `none` as `0`; `evaluateAdiCompliance` populates it
       from the corresponding AUD LCR `recognisedClf`. -/
   recognisedClfLimit : Option Money := none
+  /-- Attachment C, Paragraph 32(a): Host-recognised ALA / other jurisdictions' ALA allowed by APRA
+      in the LCR numerator (receives 10% RSF under Para 32(a) independently of AUD CLF). -/
+  hostAlaInLcrLimit : Money := 0
   /-- Attachment C, Paragraph 4: Internal ASF buffer above the minimum NSFR requirement. -/
   internalNsfrBuffer : Money := 0
   deriving DecidableEq, Repr
@@ -354,12 +413,14 @@ private def foldClfBucketRsf
 /-- Compute NSFR = ASF / RSF and check compliance against `requiredMinRate` (default 100%, para 60).
     Always enforces Attachment C Paragraph 32(a)–(b) 10% RSF caps (defaulting `none` to 0);
     allocates the limit greedily to highest-fallback-RSF items first (order-independent) and
-    defaults excess fallback to 85% (para 36(c), overridable via `excessClfFallbackFactor`). -/
+    defaults excess fallback to 50% for 32(a) third-party debt (para 34(f)) and 85% for
+    32(b) self-securitised assets (para 36(c)), both overridable via `excessClfFallbackFactor`. -/
 def evaluateNsfr
     (requiredMinRate : Rate := pct 100)
     (input : NsfrInput) : NsfrResult :=
   let totalAsf := sumBy input.asfItems AsfItem.weightedAmount
-  let lim := nonNeg (input.recognisedClfLimit.getD 0)
+  let clfLim := nonNeg (input.recognisedClfLimit.getD 0)
+  let hostAlaLim := nonNeg input.hostAlaInLcrLimit
   let isEligible32a (a : RsfAssetItem) : Bool :=
     a.category == .clfThirdPartyDebtOrHostAla && a.effectiveFactor == pct 10
   let isEligible32b (a : RsfAssetItem) : Bool :=
@@ -367,8 +428,9 @@ def evaluateNsfr
   let nonClfRsf := sumBy
     (input.rsfAssets.filter (fun a => !isEligible32a a && !isEligible32b a))
     RsfAssetItem.weightedAmount
-  let (rsf32a, remLim) := foldClfBucketRsf (input.rsfAssets.filter isEligible32a) lim (pct 85)
-  let (rsf32b, _) := foldClfBucketRsf (input.rsfAssets.filter isEligible32b) remLim (pct 85)
+  let (rsf32a, rem32aLim) := foldClfBucketRsf (input.rsfAssets.filter isEligible32a) (clfLim + hostAlaLim) (pct 50)
+  let remClfLim := min clfLim rem32aLim
+  let (rsf32b, _) := foldClfBucketRsf (input.rsfAssets.filter isEligible32b) remClfLim (pct 85)
   let assetRsf := nonClfRsf + rsf32a + rsf32b
   let obsRsf := sumBy input.obsExposures ObsExposureItem.weightedAmount
   let netDerivRsf := input.derivatives.netDerivativeRsf

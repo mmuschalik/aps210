@@ -61,6 +61,7 @@ def emitAggCall (op : AggOp) (exprStr : String) : String :=
   | .count => s!"({exprStr}).count().cast(\"decimal(38, 12)\")"
   | .anyBool => s!"({exprStr}).any()"
   | .allBool => s!"({exprStr}).all()"
+  | .rowNumber => "ibis.row_number()"
 
 def emitAggDefault (op : AggOp) : String :=
   match op with
@@ -106,9 +107,13 @@ def emitRel : RelExpr → String
   | .window cols input =>
     let inp := emitRel input
     let winAssigns := cols.map (fun (outCol, op, expr, spec) =>
-      let eStr := emitSExpr (some "t") expr
       let wStr := emitWindowSpec spec
-      s!"{outCol}=lambda t: ibis.coalesce({emitAggCall op eStr}.over({wStr}), {emitAggDefault op})")
+      match op with
+      | .rowNumber =>
+        s!"{outCol}=lambda t: (ibis.row_number().over({wStr}) + 1).cast(\"decimal(38, 12)\")"
+      | _ =>
+        let eStr := emitSExpr (some "t") expr
+        s!"{outCol}=lambda t: ibis.coalesce({emitAggCall op eStr}.over({wStr}), {emitAggDefault op})")
     s!"({inp}).mutate({String.intercalate ", " winAssigns})"
 
 /-- Emit a complete `Program` as a self-contained deterministic Python module using `ibis`. -/

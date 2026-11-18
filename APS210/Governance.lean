@@ -58,7 +58,8 @@ structure BoardAndManagementGovernance where
   level2GroupComplianceEnsured : Bool := false
   deriving DecidableEq, Repr
 
-def BoardAndManagementGovernance.isCompliant (g : BoardAndManagementGovernance) : Bool :=
+def BoardAndManagementGovernance.isCompliantFor
+    (g : BoardAndManagementGovernance) (level2Applicable : Bool := true) : Bool :=
   g.hasBoardApprovedRiskTolerance &&
   g.hasBoardApprovedStrategyAndPolicy &&
   g.hasOperatingStandards &&
@@ -69,7 +70,10 @@ def BoardAndManagementGovernance.isCompliant (g : BoardAndManagementGovernance) 
   g.boardReviewsRegularReports &&
   g.seniorManagementDutiesMet &&
   g.understandsRiskLinkages &&
-  g.level2GroupComplianceEnsured
+  (!level2Applicable || g.level2GroupComplianceEnsured)
+
+def BoardAndManagementGovernance.isCompliant (g : BoardAndManagementGovernance) : Bool :=
+  g.isCompliantFor true
 
 /-- Paragraphs 21–35: Liquidity risk management framework requirements. -/
 structure LiquidityFramework where

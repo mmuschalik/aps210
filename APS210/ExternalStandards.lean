@@ -143,17 +143,21 @@ def CashVariationMarginEligibility.isEligibleForNsfrOffset
   vm.inSameSettlementCurrencyAsDerivative
 
 /-- APS 110 Attachment D, Paragraph 38: Netting of SFT cash payables and receivables
-    with a single counterparty (APS 210 Attachment C para 26). -/
+    with a single counterparty (APS 210 Attachment C para 26).
+    Note: Transactions with no explicit end date that can be unwound at any time by either
+    party (open repos) are explicitly NOT eligible. -/
 structure SftNettingCriteria where
   sameCounterparty : Bool
-  sameExplicitFinalSettlementDateOrOpen : Bool
+  sameExplicitFinalSettlementDate : Bool
+  notOpenEndedUnwindable : Bool := true
   legallyEnforceableNettingNormalAndDefault : Bool
   settledNetOrSimultaneously : Bool
   deriving DecidableEq, Repr
 
 def SftNettingCriteria.isEligible (s : SftNettingCriteria) : Bool :=
   s.sameCounterparty &&
-  s.sameExplicitFinalSettlementDateOrOpen &&
+  s.sameExplicitFinalSettlementDate &&
+  s.notOpenEndedUnwindable &&
   s.legallyEnforceableNettingNormalAndDefault &&
   s.settledNetOrSimultaneously
 

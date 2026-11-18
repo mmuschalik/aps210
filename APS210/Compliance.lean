@@ -3,6 +3,7 @@ import APS210.Governance
 import APS210.LCR
 import APS210.MLH
 import APS210.NSFR
+import APS210.CashFlows
 
 namespace APS210
 
@@ -34,10 +35,18 @@ structure AdiComplianceInput where
   /-- Paragraph 54–55: Financial stress exception (LCR/MLH may fall below minimum
       during stress provided APRA is notified immediately). -/
   inFinancialStress : Bool := false
+  /-- Paragraph 71: Whether APRA has adjusted or excluded a specific requirement for this ADI. -/
+  hasApraAdjustmentOrExclusion : Bool := false
   /-- Paragraph 71: ADI complies with any APRA-adjusted or excluded requirement. -/
   apraAdjustmentsComplied : Bool := false
+  /-- Paragraph 72: Whether the ADI seeks to rely on a prior APRA exemption or discretion. -/
+  seeksRelianceOnPriorDiscretion : Bool := false
   /-- Paragraph 72: ADI has contacted APRA if seeking to rely on prior APRA discretions. -/
   notifiedApraOfRelianceOrPriorDiscretion : Bool := false
+  /-- Paragraph 36: Optional multi-horizon contractual cash flows and liquidity buffer
+      for cash-flow projection survival check. -/
+  scheduledCashFlows : List CashFlows.ContractualCashFlow := []
+  cashFlowSurvivalBuffer : Option Money := none
   deriving DecidableEq, Repr
 
 /-- Complete compliance assessment output for an ADI under APS 210. -/
@@ -47,6 +56,8 @@ structure AdiComplianceResult where
   overallCompliant : Bool
   allBuffersMet : Bool := true
   mlhAboveTrigger : Option Bool := none
+  cashFlowLadder : List CashFlows.CashFlowLadderRow := []
+  cashFlowSurvivalMet : Bool := true
   lcrAudResult : Option LCR.LcrResult := none
   lcrAllCurrenciesResult : Option LCR.LcrResult := none
   lcrAudLevel2Result : Option LCR.LcrResult := none
@@ -69,7 +80,7 @@ private def withClfLimit (lcrRes : Option LCR.LcrResult) (nsfrIn : NSFR.NsfrInpu
 /-- Evaluate full APS 210 compliance for an ADI across qualitative and quantitative requirements. -/
 def evaluateAdiCompliance (input : AdiComplianceInput) : AdiComplianceResult :=
   let baseGovOk :=
-    input.boardAndManagement.isCompliant &&
+    input.boardAndManagement.isCompliantFor input.hasLevel2Group &&
     input.framework.isCompliant &&
     input.riskManagement.isCompliant &&
     input.fundingStrategy.isCompliant &&
@@ -181,17 +192,26 @@ def evaluateAdiCompliance (input : AdiComplianceInput) : AdiComplianceResult :=
     | some s => s.isCompliant
     | none => true
   let apraDiscretionOk :=
-    input.apraAdjustmentsComplied && input.notifiedApraOfRelianceOrPriorDiscretion
+    (!input.hasApraAdjustmentOrExclusion || input.apraAdjustmentsComplied) &&
+    (!input.seeksRelianceOnPriorDiscretion || input.notifiedApraOfRelianceOrPriorDiscretion)
+  let ladder :=
+    if input.scheduledCashFlows.isEmpty then []
+    else CashFlows.projectCashFlowLadder input.scheduledCashFlows
+  let cfSurvivalOk := match input.cashFlowSurvivalBuffer with
+    | some buf => CashFlows.hasPositiveSurvivalBuffer buf input.scheduledCashFlows
+    | none => true
 
   let quantOk :=
     lcrAudOk && lcrAllOk && lcrAudL2Ok && lcrAllL2Ok &&
     mlhOk && mlhL2Ok && nsfrOk && nsfrL2Ok &&
-    offshoreSubOk && secOk && apraDiscretionOk
+    offshoreSubOk && secOk && apraDiscretionOk && cfSurvivalOk
   { qualitativeCompliant := qualOk
     quantitativeCompliant := quantOk
     overallCompliant := qualOk && quantOk
     allBuffersMet
     mlhAboveTrigger := mlhRes.map (·.aboveTriggerRatio)
+    cashFlowLadder := ladder
+    cashFlowSurvivalMet := cfSurvivalOk
     lcrAudResult := lcrAudRes
     lcrAllCurrenciesResult := lcrAllRes
     lcrAudLevel2Result := lcrAudL2Res

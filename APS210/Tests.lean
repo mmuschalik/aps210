@@ -5,12 +5,14 @@ import APS210.LCR
 import APS210.MLH
 import APS210.NSFR
 import APS210.Compliance
+import APS210.CashFlows
 
 namespace APS210.Tests
 
 open APS210.LCR
 open APS210.MLH
 open APS210.NSFR
+open APS210.CashFlows
 
 -- ============================================================================
 -- 1. Attachment A, Tables 1 & 2: Scorecard & Retail Deposit Outflows
@@ -414,8 +416,13 @@ example :
     ({ isCash := true, notSegregatedIfNonQccp := true, calculatedAndExchangedDailyMtM := true,
        inContractMnaOrCcpCurrency := true, inSameSettlementCurrencyAsDerivative := true } : External.CashVariationMarginEligibility).isEligibleForNsfrOffset = true := by decide
 example :
-    ({ sameCounterparty := true, sameExplicitFinalSettlementDateOrOpen := true,
+    ({ sameCounterparty := true, sameExplicitFinalSettlementDate := true,
+       notOpenEndedUnwindable := true,
        legallyEnforceableNettingNormalAndDefault := true, settledNetOrSimultaneously := true } : External.SftNettingCriteria).isEligible = true := by decide
+example :
+    ({ sameCounterparty := true, sameExplicitFinalSettlementDate := true,
+       notOpenEndedUnwindable := false,
+       legallyEnforceableNettingNormalAndDefault := true, settledNetOrSimultaneously := true } : External.SftNettingCriteria).isEligible = false := by decide
 example :
     ({ significantCreditRiskTransferred := true, cleanBreakFromOriginator := true,
        noImplicitOrMoralRecourse := true, armsLengthTerms := true } : External.Aps120CapitalReliefCriteria).isMet = true := by decide
@@ -529,7 +536,7 @@ example :
 example :
     Table3OutflowCategory.wholesaleNoticeDepositCalled.rate = pct 100 := by native_decide
 
--- Issue 6: NSFR CLF-eligible assets above limit keep their own category fallback factor (85% default)
+-- Issue 6: NSFR CLF-eligible assets above limit use their category fallback factor (50% 3rd-party / 85% self-sec default)
 example :
     let res := NSFR.evaluateNsfr (pct 100)
       { asfItems := [{ id := "cap", category := .regulatoryCapitalExTier2Lt1Yr, carryingValue := 1000 }]
@@ -538,7 +545,7 @@ example :
           , { id := "clfself", category := .selfSecuritisedClfEligible, carryingValue := 100 } ]
         obsExposures := []
         recognisedClfLimit := some 0 }
-    res.totalRsf = 85 + 85 := by native_decide
+    res.totalRsf = 50 + 85 := by native_decide
 
 -- Issue 7: `classifyLoanRsf` fixes (CB >=1yr, 35(a)->35(b) fallback, FI <6m HQLA1 10%)
 example :
@@ -620,19 +627,22 @@ example :
     res.ratioCheck.compliant = true ∧ res.bufferMet = false := by native_decide
 
 -- NSFR bilateral netting & cash VM eligibility wiring
+-- Contract-level bilateral netting failure disables cross-contract netting in `contracts`,
+-- while Para 37(b) always applies `MAX(nsfrDerivativeAssets - nsfrDerivativeLiabilities, 0)`
 example :
+    let ineligibleBna : External.BilateralNettingAgreement :=
+      { writtenAndLegallyEnforceable := false, singleLegalObligationCloseOut := true,
+        noWalkawayClause := true, reasonedLegalOpinionsInAllJurisdictions := true }
     let d : NSFR.NsfrDerivativeInput :=
-      { grossDerivativeAssets := 50
+      { contracts :=
+          [ { nettingSetId := "ns1", mtm := 50, bilateralNetting := some ineligibleBna }
+          , { nettingSetId := "ns1", mtm := -30, bilateralNetting := some ineligibleBna } ]
         eligibleCashVariationMarginReceived := 20
-        grossDerivativeLiabilities := 30
         variationMarginPosted := 0
-        bilateralNetting := some
-          { writtenAndLegallyEnforceable := false, singleLegalObligationCloseOut := true,
-            noWalkawayClause := true, reasonedLegalOpinionsInAllJurisdictions := true }
         cashVmReceivedEligibility := some
           { isCash := true, notSegregatedIfNonQccp := false, calculatedAndExchangedDailyMtM := true,
             inContractMnaOrCcpCurrency := true, inSameSettlementCurrencyAsDerivative := true } }
-    d.netDerivativeRsf = 50 := by native_decide
+    d.nsfrDerivativeAssets = 50 ∧ d.nsfrDerivativeLiabilities = 30 ∧ d.netDerivativeRsf = 20 := by native_decide
 
 -- Specific LCR breach / MLH shortfall notifications & Securitisation APS 120 wiring
 example :
@@ -674,7 +684,8 @@ example :
     (computeUnwindAdjustments
       [{ hqla1Delta := 25,
          nettingCriteria := some
-           { sameCounterparty := true, sameExplicitFinalSettlementDateOrOpen := true,
+           { sameCounterparty := true, sameExplicitFinalSettlementDate := true,
+             notOpenEndedUnwindable := true,
              legallyEnforceableNettingNormalAndDefault := false,
              settledNetOrSimultaneously := true } }]).deltaHqla1 = 0 := by native_decide
 
@@ -802,5 +813,89 @@ example :
 
 example :
     classifyHqla2bRmbs .aa 80 true true false true true = none := by decide
+
+-- ============================================================================
+-- 15. Regression Tests for Rule Fixes & CashFlows Module
+-- ============================================================================
+
+-- Fix: Non-0%/20%-RW sovereign/CB/PSE/MDB debt rated A+..BBB- is NOT HQLA2B corporate debt
+example :
+    classifyHqlaDebtSecurity true 50 .aPlus false false true true = none := by decide
+
+-- Fix: Qualifying SME (< $2m, managed as retail) excess operational balance gets 10% retail rate
+example :
+    sumBy (classifyOperationalDeposit "op-sme" .aud (.sme 500000 true) 100 50 false) OutflowItem.outflowAmount = 25 + 5 := by native_decide
+
+-- Fix: Intermediated non-look-through term deposit fails exclusion when category is tainted
+example :
+    ({ id := "int-taint", currency := .aud, balance := 100, isStable := false,
+       isIntermediated := true, intermediatedLookThroughMet := false,
+       residualMaturityOrNoticeGt30Days := true, noWithdrawalRightOrMaterialPenalty := true,
+       categoryTaintedByEarlyWithdrawal := true } : RetailDeposit).outflowAmount = 100 := by native_decide
+
+-- Fix: Para 32(a) excess defaults to 50% (not 85%) and host ALA works independently of CLF = 0
+example :
+    let a : NSFR.RsfAssetItem := { id := "a", category := .clfThirdPartyDebtOrHostAla, carryingValue := 100 }
+    let rNoLim := NSFR.evaluateNsfr (pct 100) { asfItems := [], rsfAssets := [a], obsExposures := [] }
+    let rHostAla := NSFR.evaluateNsfr (pct 100) { asfItems := [], rsfAssets := [a], obsExposures := [], hostAlaInLcrLimit := 100 }
+    rNoLim.totalRsf = 50 ∧ rHostAla.totalRsf = 10 := by native_decide
+
+-- Fix: NSFR SFT netting per Attachment C para 26 & APS 110 Att D para 38
+example :
+    let openRepo : External.SftNettingCriteria :=
+      { sameCounterparty := true, sameExplicitFinalSettlementDate := false,
+        notOpenEndedUnwindable := false,
+        legallyEnforceableNettingNormalAndDefault := true, settledNetOrSimultaneously := true }
+    let termRepo : External.SftNettingCriteria :=
+      { sameCounterparty := true, sameExplicitFinalSettlementDate := true,
+        notOpenEndedUnwindable := true,
+        legallyEnforceableNettingNormalAndDefault := true, settledNetOrSimultaneously := true }
+    ({ receivable := 100, payable := 60, nettingCriteria := openRepo } : NSFR.NsfrSftNettingGroup).netNsfrReceivable = 100 ∧
+    ({ receivable := 100, payable := 60, nettingCriteria := termRepo } : NSFR.NsfrSftNettingGroup).netNsfrReceivable = 40 := by native_decide
+
+-- Fix: Conditional defaults (non-drawn CLF, solo ADI without Level 2, no APRA adjustments/prior discretion)
+example :
+    ({ approvedByApra := true, contractualAmount := 50,
+       pledgedUnderZeroRunoffSecFunding := 0, receivedUnderZeroInflowSecLending := 0,
+       collateralHeldAfterRbaMargins := 50, collateralDiversified := true,
+       annualReapprovalCurrent := true, includedInFundingStrategy := true,
+       balanceSheetEffortsExhausted := true } : ClfInput).recognisedAmount = 50 := by native_decide
+
+-- CashFlows: NSFR liability & amortising loan maturity splitting (Att C Paras 8, 11(c), 22)
+example :
+    let liabAsf := sumBy
+      (splitLiabilityCashFlowsForAsf "bond" .otherFundingLt6m .otherFunding6mToLt1Yr .borrowingsAndLiabilitiesGe1Yr
+        [(100, 90), (200, 240), (300, 400)])
+      NSFR.AsfItem.weightedAmount
+    let loanRsf := sumBy
+      (splitAmortisingLoanForRsf "loan" .otherNonHqlaLt1Yr .otherPerformingLoansNonFiGe1Yr
+        [(100, 180), (400, 730)])
+      NSFR.RsfAssetItem.weightedAmount
+    -- ASF = 100*0 + 200*0.5 + 300*1 = 400; RSF = 100*0.5 + 400*0.85 = 390
+    liabAsf = 400 ∧ loanRsf = 390 := by native_decide
+
+-- CashFlows: Multi-horizon cash-flow ladder & survival buffer (Main Body Para 36)
+example :
+    let flows : List ContractualCashFlow :=
+      [ { id := "out1", currency := .aud, direction := .outflow, amount := 60, contractualDays := 5 }
+      , { id := "in1", currency := .aud, direction := .inflow, amount := 40, contractualDays := 20 }
+      , { id := "out2", currency := .aud, direction := .outflow, amount := 50, contractualDays := 90 } ]
+    hasPositiveSurvivalBuffer 70 flows = true ∧
+    hasPositiveSurvivalBuffer 60 flows = false := by native_decide
+
+-- CashFlows: LCR derivative MNA + same-day FX netting & SPV/Para 60/Para 31 filtering
+example :
+    let flows : List ContractualCashFlow :=
+      [ { id := "spv-out", currency := .aud, direction := .outflow, amount := 50, contractualDays := 15, source := .securitisationSpv }
+      , { id := "open-min", currency := .aud, direction := .inflow, amount := 20, contractualDays := 10, isOpenMaturity := true, isMinimumContractualPayment := true }
+      , { id := "open-full", currency := .aud, direction := .inflow, amount := 999, contractualDays := 10, isOpenMaturity := true, isMinimumContractualPayment := false }
+      , { id := "ext-late", currency := .aud, direction := .inflow, amount := 999, contractualDays := 20, latestExtensionDays := some 40 }
+      , { id := "hqla-in", currency := .aud, direction := .inflow, amount := 999, contractualDays := 10, countedInHqla := true } ]
+    let derivLegs : List LcrDerivativeCashFlowLeg :=
+      [ { counterparty := "cp1", currency := .aud, hasValidMna := true, payable := 80, receivable := 30 }
+      , { counterparty := "cp2", currency := .aud, hasValidMna := false, isSameDayFxPrincipalExchange := true, payable := 20, receivable := 50 } ]
+    let (outs, ins) := deriveLcrFromCashFlows flows (fun _ => .nonOperationalOther) (fun _ => .otherWholesaleEntity) derivLegs
+    sumBy outs OutflowItem.outflowAmount = 50 + 50 ∧
+    sumBy ins InflowItem.inflowAmount = 10 + 30 := by native_decide
 
 end APS210.Tests

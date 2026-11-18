@@ -145,6 +145,7 @@ inductive AggOp where
   | count
   | anyBool
   | allBool
+  | rowNumber
   deriving DecidableEq, Repr
 
 def evalAggOp (op : AggOp) (vals : List Val) : Val :=
@@ -164,6 +165,7 @@ def evalAggOp (op : AggOp) (vals : List Val) : Val :=
   | .count => .rat (vals.length : Rat)
   | .anyBool => .bool (vals.any Val.asBool)
   | .allBool => .bool (vals.all Val.asBool)
+  | .rowNumber => .rat (vals.length : Rat)
 
 /-- Window specification matching SQL / Ibis `ROWS BETWEEN` semantics. -/
 structure WindowSpec where
@@ -241,10 +243,14 @@ private def evalWindowCol (rows : List Row) (scalarEnv : Row)
       let sorted := sortByList (rowLtBy spec.orderBy) part
       let n := sorted.length
       (List.range n).zip sorted |>.map (fun (i, r) =>
-        let lo := match spec.preceding? with | none => 0 | some p => i - p
-        let hi := match spec.following? with | none => n - 1 | some f => min (n - 1) (i + f)
-        let frame := listSlice sorted lo hi
-        let v := evalAggOp op (frame.map (fun r' => evalSExpr (r' ++ scalarEnv) expr))
+        let v :=
+          if op == .rowNumber then
+            .rat ((i + 1 : Nat) : Rat)
+          else
+            let lo := match spec.preceding? with | none => 0 | some p => i - p
+            let hi := match spec.following? with | none => n - 1 | some f => min (n - 1) (i + f)
+            let frame := listSlice sorted lo hi
+            evalAggOp op (frame.map (fun r' => evalSExpr (r' ++ scalarEnv) expr))
         (outCol, v) :: r))
 
 /-- Denotational semantics of `RelExpr` with ambient scalar environment. -/

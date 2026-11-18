@@ -36,6 +36,8 @@ private def parsePosition (j : Json) : Except String PositionRow := do
     , maturityDate := ← parseDate (← getField j "maturity_date")
     , earliestCallDate := ← parseDate (← getField j "earliest_call_date")
     , hasCallOption := ← (← getField j "has_call_option").getBool?
+    , latestExtensionDate := ← parseDate (← getField j "latest_extension_date")
+    , hasExtensionOption := ← (← getField j "has_extension_option").getBool?
     , noticeDays := ← parseRat (← getField j "notice_days")
     , encumbranceEndDate := ← parseDate (← getField j "encumbrance_end_date")
     , isEncumbered := ← (← getField j "is_encumbered").getBool?
@@ -88,6 +90,38 @@ private def parseMonthlyOutflow (j : Json) : Except String MonthlyNetOutflow := 
     , netCashOutflow := ← parseRat (← getField j "net_cash_outflow")
     }
 
+private def parseEcaiAssessment (j : Json) : Except String EcaiAssessmentRow := do
+  pure
+    { exposureId := ← (← getField j "exposure_id").getStr?
+    , ratingStr := ← (← getField j "rating_str").getStr?
+    }
+
+private def parseAmortCashflow (j : Json) : Except String AmortisationCashflowRow := do
+  pure
+    { loanId := ← (← getField j "loan_id").getStr?
+    , paymentDate := ← parseDate (← getField j "payment_date")
+    , principalAmount := ← parseRat (← getField j "principal_amount")
+    }
+
+private def parseSftLeg (j : Json) : Except String SftLegRow := do
+  pure
+    { legId := ← (← getField j "leg_id").getStr?
+    , meetsOperationalReqs := ← (← getField j "meets_operational_reqs").getBool?
+    , nettingEligible := ← (← getField j "netting_eligible").getBool?
+    , hqla1Delta := ← parseRat (← getField j "hqla1_delta")
+    , hqla2aDelta := ← parseRat (← getField j "hqla2a_delta")
+    , hqla2bDelta := ← parseRat (← getField j "hqla2b_delta")
+    }
+
+private def parseClf (j : Json) : Except String ClfSummaryInput := do
+  pure
+    { eligible := ← (← getField j "eligible").getBool?
+    , contractualAmount := ← parseRat (← getField j "contractual_amount")
+    , pledgedZeroRunoff := ← parseRat (← getField j "pledged_zero_runoff")
+    , receivedZeroInflow := ← parseRat (← getField j "received_zero_inflow")
+    , collateralAfterMargin := ← parseRat (← getField j "collateral_after_margin")
+    }
+
 private def parseArr {α : Type} (j : Json) (k : String) (f : Json → Except String α) : Except String (List α) := do
   let arr ← (← getField j k).getArr?
   arr.toList.mapM f
@@ -101,6 +135,10 @@ private def parseInput (j : Json) : Except String UpstreamInput := do
     , ccyHqla1Positions := ← parseArr j "ccy_hqla1_positions" parseCcyHqla1
     , dailyCollateralFlows := ← parseArr j "daily_collateral_flows" parseCollateralFlow
     , monthlyNetOutflows := ← parseArr j "monthly_net_outflows" parseMonthlyOutflow
+    , ecaiAssessments := ← parseArr j "ecai_assessments" parseEcaiAssessment
+    , amortisationCashflows := ← parseArr j "amortisation_cashflows" parseAmortCashflow
+    , sftLegs := ← parseArr j "sft_legs" parseSftLeg
+    , clf := ← parseClf (← getField j "clf")
     }
 
 private def ratToJson (r : Rat) : Json :=
@@ -120,8 +158,7 @@ def main (args : List String) : IO UInt32 := do
     return 1
   | .ok input =>
     let domainRes := evaluateUpstream input
-    let irRes := evalProgram upstreamProgram (upstreamInputToTableEnv input)
-      [("reporting_date", .date input.reportingDate)]
+    let irRes := evalProgram upstreamProgram (upstreamInputToTableEnv input) (upstreamInputToScalars input)
     let outJson := Json.mkObj
       [ ("domain", rowToJson (upstreamResultToRow domainRes))
       , ("ir", rowToJson irRes)

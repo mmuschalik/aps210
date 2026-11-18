@@ -4,6 +4,7 @@ import Lean2Ibis.LCRSpec
 import Lean2Ibis.NSFRSpec
 import Lean2Ibis.ExternalAndComplianceSpec
 import Lean2Ibis.UpstreamSpec
+import Lean2Ibis.CashFlowsSpec
 import Lean2Ibis.EmitIbis
 import Lean2Sql.DuckDB
 
@@ -21,6 +22,8 @@ def main : IO Unit := do
     (Lean2Ibis.emitProgram Lean2Ibis.ExternalAndComplianceSpec.complianceGateProgram)
   IO.FS.writeFile "generated/aps210_upstream_ibis.py"
     (Lean2Ibis.emitProgram Lean2Ibis.UpstreamSpec.upstreamProgram)
+  IO.FS.writeFile "generated/aps210_cashflows_ibis.py"
+    (Lean2Ibis.emitProgram Lean2Ibis.CashFlowsSpec.cashFlowsProgram)
 
   -- Also emit verified DuckDB SQL directly from Lean2Sql.DuckDB
   if let some sqlProg := Lean2Sql.DuckDB.compileProgram Lean2Ibis.MLHSpec.mlhProgram then
@@ -29,4 +32,4 @@ def main : IO Unit := do
         [ ("placements_by_other_adis", "CAST(:placements_by_other_adis AS DECIMAL(38, 12))")
         , ("required_min_rate", "CAST(:required_min_rate AS DECIMAL(38, 12))")
         , ("trigger_ratio", "CAST(:trigger_ratio AS DECIMAL(38, 12))") ])
-  IO.println "Generated all 6 Ibis modules and DuckDB SQL in generated/"
+  IO.println "Generated all 7 Ibis modules and DuckDB SQL in generated/"

@@ -16,7 +16,8 @@ APS 210 upstream & cross-row aggregation pipeline compiled from Lean → Ibis:
 -/
 
 def effectiveMaturityDateExpr : SExpr :=
-  .ite (.col "has_call_option") (.col "earliest_call_date") (.col "maturity_date")
+  .ite (.col "has_call_option") (.col "earliest_call_date")
+    (.ite (.col "has_extension_option") (.col "latest_extension_date") (.col "maturity_date"))
 
 def positionsEnrichedRel : RelExpr :=
   .withColumns
@@ -96,18 +97,88 @@ def collateralRolling30dRel : RelExpr :=
           , following? := some 0 }) ]
       (.table "daily_collateral_flows"))
 
+def ecaiGradeRankExpr : SExpr :=
+  .caseStr (.col "rating_str")
+    [ ("AAA", .litRat 1 1)
+    , ("AA+", .litRat 1 1)
+    , ("AA", .litRat 1 1)
+    , ("AA-", .litRat 1 1)
+    , ("A+", .litRat 2 1)
+    , ("A", .litRat 2 1)
+    , ("A-", .litRat 2 1)
+    , ("BBB+", .litRat 3 1)
+    , ("BBB", .litRat 3 1)
+    , ("BBB-", .litRat 3 1)
+    , ("below_bbb_minus", .litRat 4 1)
+    ]
+    (.litRat 7 1)
+
+def ecaiResolvedRel : RelExpr :=
+  let rated :=
+    .filter (.binOp .lt (.col "grade_rank") (.litRat 7 1))
+      (.withColumns [("grade_rank", ecaiGradeRankExpr)] (.table "ecai_assessments"))
+  let ranked :=
+    .window
+      [ ("rn", .rowNumber, .col "grade_rank",
+          { partitionBy := ["exposure_id"], orderBy := [("grade_rank", true)] })
+      , ("cnt", .count, .col "grade_rank",
+          { partitionBy := ["exposure_id"] })
+      ]
+      rated
+  .filter
+    (.binOp .or
+      (.binOp .and (.binOp .eq (.col "cnt") (.litRat 1 1)) (.binOp .eq (.col "rn") (.litRat 1 1)))
+      (.binOp .and (.binOp .ge (.col "cnt") (.litRat 2 1)) (.binOp .eq (.col "rn") (.litRat 2 1))))
+    ranked
+
+def amortisationEnrichedRel : RelExpr :=
+  .withColumns
+    [ ("cf_days", .binOp .dateDiff (.col "payment_date") (.var "reporting_date")) ]
+    (.table "amortisation_cashflows")
+
+def sftLegsAdjustedRel : RelExpr :=
+  let netAdj (colName : String) : SExpr :=
+    .ite (.col "netting_eligible") (.col colName) (.binOp .min (.col colName) (.litRat 0 1))
+  .withColumns
+    [ ("adj_hqla1", netAdj "hqla1_delta")
+    , ("adj_hqla2a", netAdj "hqla2a_delta")
+    , ("adj_hqla2b", netAdj "hqla2b_delta")
+    ]
+    (.filter (.col "meets_operational_reqs") (.table "sft_legs"))
+
+def clfRecognisedExpr : SExpr :=
+  let boundA := .unOp .nonNeg (.var "clf_contractual")
+  let boundB :=
+    .unOp .nonNeg
+      (.binOp .add
+        (.binOp .sub (.var "clf_contractual") (.unOp .nonNeg (.var "clf_pledged_zero_runoff")))
+        (.unOp .nonNeg (.var "clf_received_zero_inflow")))
+  let boundC := .unOp .nonNeg (.var "clf_collateral_after_margin")
+  .ite (.var "clf_eligible")
+    (.binOp .min boundA (.binOp .min boundB boundC))
+    (.litRat 0 1)
+
 def upstreamProgram : Program :=
   { name := "evaluate_aps210_upstream"
   , tableParams :=
-      [ ("positions", ["id", "amount", "maturity_date", "earliest_call_date", "has_call_option", "notice_days", "encumbrance_end_date", "is_encumbered"])
+      [ ("positions", ["id", "amount", "maturity_date", "earliest_call_date", "has_call_option", "latest_extension_date", "has_extension_option", "notice_days", "encumbrance_end_date", "is_encumbered"])
       , ("derivative_trades", ["trade_id", "mna_id", "has_eligible_mna", "mtm_payable", "mtm_receivable"])
       , ("deposit_accounts", ["account_id", "customer_group_id", "customer_type", "product_category", "balance", "has_early_withdrawal_no_penalty", "residual_days"])
       , ("ccy_hqla1_positions", ["currency", "hqla1_foreign_sov_amt", "ccy_net_outflow"])
       , ("daily_collateral_flows", ["valuation_date", "net_collateral_flow"])
       , ("monthly_net_outflows", ["month_end_date", "net_cash_outflow"])
+      , ("ecai_assessments", ["exposure_id", "rating_str"])
+      , ("amortisation_cashflows", ["loan_id", "payment_date", "principal_amount"])
+      , ("sft_legs", ["leg_id", "meets_operational_reqs", "netting_eligible", "hqla1_delta", "hqla2a_delta", "hqla2b_delta"])
       ]
   , scalarParams :=
-      [ ("reporting_date", .date) ]
+      [ ("reporting_date", .date)
+      , ("clf_eligible", .bool)
+      , ("clf_contractual", .rat)
+      , ("clf_pledged_zero_runoff", .rat)
+      , ("clf_received_zero_inflow", .rat)
+      , ("clf_collateral_after_margin", .rat)
+      ]
   , lets :=
       [ ("pos_lcr_within_30d_amt",
           .agg .sum
@@ -153,6 +224,30 @@ def upstreamProgram : Program :=
           .agg .max collateralRolling30dRel (.col "abs_30d_flow"))
       , ("avg_12m_net_outflow",
           .agg .avg (.table "monthly_net_outflows") (.col "net_cash_outflow"))
+      , ("ecai_resolved_grade_sum",
+          .agg .sum ecaiResolvedRel (.col "grade_rank"))
+      , ("ecai_investment_grade_count",
+          .agg .count (.filter (.binOp .le (.col "grade_rank") (.litRat 3 1)) ecaiResolvedRel) (.col "grade_rank"))
+      , ("amort_nsfr_lt_6m_amt",
+          .agg .sum
+            (.filter (.binOp .lt (.col "cf_days") (.litRat 180 1)) amortisationEnrichedRel)
+            (.col "principal_amount"))
+      , ("amort_nsfr_6m_to_1y_amt",
+          .agg .sum
+            (.filter
+              (.binOp .and
+                (.binOp .ge (.col "cf_days") (.litRat 180 1))
+                (.binOp .lt (.col "cf_days") (.litRat 365 1)))
+              amortisationEnrichedRel)
+            (.col "principal_amount"))
+      , ("amort_nsfr_ge_1y_amt",
+          .agg .sum
+            (.filter (.binOp .ge (.col "cf_days") (.litRat 365 1)) amortisationEnrichedRel)
+            (.col "principal_amount"))
+      , ("sft_unwind_hqla1", .agg .sum sftLegsAdjustedRel (.col "adj_hqla1"))
+      , ("sft_unwind_hqla2a", .agg .sum sftLegsAdjustedRel (.col "adj_hqla2a"))
+      , ("sft_unwind_hqla2b", .agg .sum sftLegsAdjustedRel (.col "adj_hqla2b"))
+      , ("clf_recognised_amount", .scalar clfRecognisedExpr)
       ]
   , outputs :=
       [ ("pos_lcr_within_30d_amt", .var "pos_lcr_within_30d_amt")
@@ -168,6 +263,15 @@ def upstreamProgram : Program :=
       , ("capped_foreign_sov_hqla1", .var "capped_foreign_sov_hqla1")
       , ("max_30d_collateral_outflow", .var "max_30d_collateral_outflow")
       , ("avg_12m_net_outflow", .var "avg_12m_net_outflow")
+      , ("ecai_resolved_grade_sum", .var "ecai_resolved_grade_sum")
+      , ("ecai_investment_grade_count", .var "ecai_investment_grade_count")
+      , ("amort_nsfr_lt_6m_amt", .var "amort_nsfr_lt_6m_amt")
+      , ("amort_nsfr_6m_to_1y_amt", .var "amort_nsfr_6m_to_1y_amt")
+      , ("amort_nsfr_ge_1y_amt", .var "amort_nsfr_ge_1y_amt")
+      , ("sft_unwind_hqla1", .var "sft_unwind_hqla1")
+      , ("sft_unwind_hqla2a", .var "sft_unwind_hqla2a")
+      , ("sft_unwind_hqla2b", .var "sft_unwind_hqla2b")
+      , ("clf_recognised_amount", .var "clf_recognised_amount")
       ]
   }
 
@@ -183,6 +287,8 @@ def upstreamInputToTableEnv (input : UpstreamInput) : TableEnv :=
       , ("maturity_date", .date p.maturityDate)
       , ("earliest_call_date", .date p.earliestCallDate)
       , ("has_call_option", .bool p.hasCallOption)
+      , ("latest_extension_date", .date p.latestExtensionDate)
+      , ("has_extension_option", .bool p.hasExtensionOption)
       , ("notice_days", .rat p.noticeDays)
       , ("encumbrance_end_date", .date p.encumbranceEndDate)
       , ("is_encumbered", .bool p.isEncumbered)
@@ -216,6 +322,32 @@ def upstreamInputToTableEnv (input : UpstreamInput) : TableEnv :=
       [ ("month_end_date", .date m.monthEndDate)
       , ("net_cash_outflow", .rat m.netCashOutflow)
       ]))
+  , ("ecai_assessments", input.ecaiAssessments.map (fun e =>
+      [ ("exposure_id", .str e.exposureId)
+      , ("rating_str", .str e.ratingStr)
+      ]))
+  , ("amortisation_cashflows", input.amortisationCashflows.map (fun c =>
+      [ ("loan_id", .str c.loanId)
+      , ("payment_date", .date c.paymentDate)
+      , ("principal_amount", .rat c.principalAmount)
+      ]))
+  , ("sft_legs", input.sftLegs.map (fun s =>
+      [ ("leg_id", .str s.legId)
+      , ("meets_operational_reqs", .bool s.meetsOperationalReqs)
+      , ("netting_eligible", .bool s.nettingEligible)
+      , ("hqla1_delta", .rat s.hqla1Delta)
+      , ("hqla2a_delta", .rat s.hqla2aDelta)
+      , ("hqla2b_delta", .rat s.hqla2bDelta)
+      ]))
+  ]
+
+def upstreamInputToScalars (input : UpstreamInput) : Row :=
+  [ ("reporting_date", .date input.reportingDate)
+  , ("clf_eligible", .bool input.clf.eligible)
+  , ("clf_contractual", .rat input.clf.contractualAmount)
+  , ("clf_pledged_zero_runoff", .rat input.clf.pledgedZeroRunoff)
+  , ("clf_received_zero_inflow", .rat input.clf.receivedZeroInflow)
+  , ("clf_collateral_after_margin", .rat input.clf.collateralAfterMargin)
   ]
 
 def upstreamResultToRow (r : UpstreamResult) : Row :=
@@ -232,6 +364,15 @@ def upstreamResultToRow (r : UpstreamResult) : Row :=
   , ("capped_foreign_sov_hqla1", .rat r.cappedForeignSovHqla1)
   , ("max_30d_collateral_outflow", .rat r.max30dCollateralOutflow)
   , ("avg_12m_net_outflow", .rat r.avg12mNetOutflow)
+  , ("ecai_resolved_grade_sum", .rat r.ecaiResolvedGradeSum)
+  , ("ecai_investment_grade_count", .rat r.ecaiInvestmentGradeCount)
+  , ("amort_nsfr_lt_6m_amt", .rat r.amortNsfrLt6mAmt)
+  , ("amort_nsfr_6m_to_1y_amt", .rat r.amortNsfr6mTo1yAmt)
+  , ("amort_nsfr_ge_1y_amt", .rat r.amortNsfrGe1yAmt)
+  , ("sft_unwind_hqla1", .rat r.sftUnwindHqla1)
+  , ("sft_unwind_hqla2a", .rat r.sftUnwindHqla2a)
+  , ("sft_unwind_hqla2b", .rat r.sftUnwindHqla2b)
+  , ("clf_recognised_amount", .rat r.clfRecognisedAmount)
   ]
 
 def smokeInput : UpstreamInput :=
@@ -270,10 +411,36 @@ def smokeInput : UpstreamInput :=
         { monthEndDate := civilDate 2025 7 28 + ((i * 30 : Nat) : Int)
         , netCashOutflow := 100 + 10 * (i : Int)
         })
+  , ecaiAssessments :=
+      [ { exposureId := "e1", ratingStr := "A+" }           -- 1 rating -> grade 2
+      , { exposureId := "e2", ratingStr := "AAA" }
+      , { exposureId := "e2", ratingStr := "BBB-" }         -- 2 ratings -> worse = grade 3
+      , { exposureId := "e3", ratingStr := "AA+" }
+      , { exposureId := "e3", ratingStr := "A" }
+      , { exposureId := "e3", ratingStr := "below_bbb_minus" } -- 3 ratings -> 2nd best = grade 2
+      , { exposureId := "e4", ratingStr := "unrated" }      -- 0 rated -> excluded
+      ]
+  , amortisationCashflows :=
+      [ { loanId := "L1", paymentDate := civilDate 2026 9 1, principalAmount := 50 }
+      , { loanId := "L1", paymentDate := civilDate 2027 3 1, principalAmount := 75 }
+      , { loanId := "L1", paymentDate := civilDate 2028 6 30, principalAmount := 125 }
+      ]
+  , sftLegs :=
+      [ { legId := "s1", meetsOperationalReqs := true, nettingEligible := true, hqla1Delta := 20, hqla2aDelta := -5, hqla2bDelta := 0 }
+      , { legId := "s2", meetsOperationalReqs := true, nettingEligible := false, hqla1Delta := 15, hqla2aDelta := -10, hqla2bDelta := 3 }
+      , { legId := "s3", meetsOperationalReqs := false, nettingEligible := true, hqla1Delta := 100, hqla2aDelta := 0, hqla2bDelta := 0 }
+      ]
+  , clf :=
+      { eligible := true
+      , contractualAmount := 500
+      , pledgedZeroRunoff := 80
+      , receivedZeroInflow := 20
+      , collateralAfterMargin := 460
+      }
   }
 
 theorem upstream_eval_matches_domain :
-    evalProgram upstreamProgram (upstreamInputToTableEnv smokeInput) [("reporting_date", .date smokeInput.reportingDate)] =
+    evalProgram upstreamProgram (upstreamInputToTableEnv smokeInput) (upstreamInputToScalars smokeInput) =
       upstreamResultToRow (evaluateUpstream smokeInput) := by
   native_decide
 

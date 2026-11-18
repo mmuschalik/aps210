@@ -8,6 +8,7 @@ import APS210.LCR
 import APS210.MLH
 import APS210.NSFR
 import APS210.Compliance
+import APS210.CashFlows
 import APS210.Upstream
 import APS210.Theorems
 import APS210.Tests

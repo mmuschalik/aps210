@@ -69,7 +69,7 @@ def RetailDeposit.isExcludedTermDeposit (d : RetailDeposit) : Bool :=
 def RetailDeposit.outflowAmount (basis : ConsolidationBasis := .level1) (d : RetailDeposit) : Money :=
   let bal := nonNeg d.balance
   if d.isIntermediated && !d.intermediatedLookThroughMet then
-    if !d.noticeDepositCalled && d.residualMaturityOrNoticeGt30Days && d.noWithdrawalRightOrMaterialPenalty then 0
+    if d.isExcludedTermDeposit then 0
     else bal * pct 100
   else if d.noticeDepositCalled then
     bal * pct 100
@@ -285,22 +285,28 @@ def classifyCommittedFacility
   | .hedgeFundOrMmfOrSpv => .committedLiquidityOtherFinancialInstitutions
   | .mdb _ | .nationalDevelopmentBank | .otherLegalEntity => .committedFacilityOtherLegalEntities
 
-/-- Attachment A, Paragraph 50: Split an operational deposit into qualifying operational
+/-- Attachment A, Paragraphs 46 & 50: Split an operational deposit into qualifying operational
     balances (5% insured / 25% uninsured) and excess non-operational balances
-    (20% insured / 40% uninsured for non-FI; 100% for financial institutions). -/
+    (retail 5%/10%/25% for qualifying SMEs < AUD 2m managed as retail;
+     20% insured / 40% uninsured for other non-FI corporates/sovereigns/CBs/PSEs/MDBs/SMEs >= 2m;
+     100% for financial institutions and other legal entities). -/
 def classifyOperationalDeposit
     (idPrefix : String)
     (currency : Currency)
     (cp : CounterpartyKind)
     (qualifyingOperationalAmount excessAmount : Money)
-    (fullyCoveredByDepositInsurance : Bool) : List OutflowItem :=
+    (fullyCoveredByDepositInsurance : Bool)
+    (smeIsStable : Bool := false)
+    (smeScore : Nat := 0) : List OutflowItem :=
   let opCat := if fullyCoveredByDepositInsurance then .operationalDepositInsured else .operationalDepositUninsured
   let excessCat := match cp with
     | .nonFinancialCorporate | .sovereign _ _ | .centralBank | .rba | .pse _ | .mdb _ =>
       if fullyCoveredByDepositInsurance then .excessOperationalNonFinInsured else .excessOperationalNonFinUninsured
     | .sme aggAud managedAsRetail =>
       if aggAud < 2000000 && managedAsRetail then
-        if fullyCoveredByDepositInsurance then .excessOperationalNonFinInsured else .excessOperationalNonFinUninsured
+        if smeIsStable then .retailStable
+        else if smeScore <= 2 then .retailLessStable
+        else .retailHigherRunoffLessStable
       else
         if fullyCoveredByDepositInsurance then .excessOperationalNonFinInsured else .excessOperationalNonFinUninsured
     | _ => .excessOperationalFi

@@ -50,10 +50,10 @@ def classifyHqlaDebtSecurity
     some .hqla1
   else if isSovereignCbPseMdb && aps112RiskWeightPct == 20 && !isIssuedByFinancialInstitutionOrAssoc then
     some .hqla2a
-  else if (!isIssuedByFinancialInstitutionOrAssoc && isPlainVanilla || isCoveredBondNotOwnOrAssoc) &&
+  else if (!isSovereignCbPseMdb && !isIssuedByFinancialInstitutionOrAssoc && isPlainVanilla || isCoveredBondNotOwnOrAssoc) &&
       rating.isAtLeastAAMinus then
     some .hqla2a
-  else if !isIssuedByFinancialInstitutionOrAssoc && rating.isBetweenAPlusAndBBBMinus then
+  else if !isSovereignCbPseMdb && !isIssuedByFinancialInstitutionOrAssoc && rating.isBetweenAPlusAndBBBMinus then
     some .hqla2bCorporateDebt
   else
     none
@@ -302,25 +302,33 @@ structure ClfInput where
   /-- Para 15(c): Market value of assets held as collateral for the CLF after RBA margins
       (must satisfy para 16 operational & diversification requirements). -/
   collateralHeldAfterRbaMargins : Money
-  /-- Para 16: CLF collateral satisfies operational and diversification requirements. -/
+  /-- Para 16(a): CLF collateral satisfies operational requirements (paras 22–25). -/
+  collateralOperational : Option HqlaOperationalCompliance := none
+  /-- Para 16(b): CLF collateral satisfies diversification requirements. -/
   collateralDiversified : Bool := false
   /-- Para 17: Annual CLF re-approval is current. -/
   annualReapprovalCurrent : Bool := false
   /-- Para 18: CLF amount is incorporated in the ADI's funding strategy. -/
   includedInFundingStrategy : Bool := false
-  /-- Para 19: Every reasonable effort made to manage liquidity via the balance sheet first. -/
+  /-- Para 18: Every reasonable effort made to manage liquidity via the balance sheet first. -/
   balanceSheetEffortsExhausted : Bool := false
-  /-- Para 20–21: If drawn, Board/senior attestation and notice to APRA completed. -/
+  /-- Para 21: True if funds were drawn under the CLF for non-intraday / non-ESA end-of-day purposes. -/
+  clfDrawnNonIntraday : Bool := false
+  /-- Para 21: If drawn non-intraday, senior management attestation and APRA notice completed. -/
   drawdownAttestedAndNotifiedToApra : Bool := false
   deriving DecidableEq, Repr
 
-/-- Attachment A, Paragraphs 16–21: Whether CLF governance and diversification conditions hold. -/
+/-- Attachment A, Paragraphs 16–21: Whether CLF governance, operational, and diversification conditions hold. -/
 def ClfInput.processEligible (clf : ClfInput) : Bool :=
+  let opOk := match clf.collateralOperational with
+    | some op => op.isMet
+    | none => true
+  opOk &&
   clf.collateralDiversified &&
   clf.annualReapprovalCurrent &&
   clf.includedInFundingStrategy &&
   clf.balanceSheetEffortsExhausted &&
-  clf.drawdownAttestedAndNotifiedToApra
+  (!clf.clfDrawnNonIntraday || clf.drawdownAttestedAndNotifiedToApra)
 
 /-- Attachment A, Paragraph 15(a)–(c) & 16–21: Lowest of the three CLF bounds
     when APRA-approved and all CLF process/diversification conditions are met. -/

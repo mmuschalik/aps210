@@ -4,4 +4,5 @@ import Lean2Ibis.LCRSpec
 import Lean2Ibis.NSFRSpec
 import Lean2Ibis.ExternalAndComplianceSpec
 import Lean2Ibis.UpstreamSpec
+import Lean2Ibis.CashFlowsSpec
 import Lean2Ibis.EmitIbis

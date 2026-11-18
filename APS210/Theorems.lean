@@ -7,11 +7,13 @@ import APS210.LCR
 import APS210.MLH
 import APS210.NSFR
 import APS210.Compliance
+import APS210.CashFlows
 
 namespace APS210.Theorems
 
 open APS210.LCR
 open APS210.NSFR
+open APS210.CashFlows
 
 private theorem rat_min_le_right (a b : Rat) : min a b ≤ b := by
   change (if a ≤ b then a else b) ≤ b
@@ -273,5 +275,118 @@ theorem lessStableRunoff_monotone {s1 s2 : Nat} (h : s1 ≤ s2) :
     native_decide
   · exact absurd (Nat.le_trans h h2) h1
   · simp [lessStableRunoffRate, h1, h2]
+
+-- ============================================================================
+-- Cash-Flow Conservation, Filtering, & Derivative Netting Theorems
+-- ============================================================================
+
+private theorem foldl_add_shift {α : Type} (xs : List α) (f : α → Rat) (init : Rat) :
+    xs.foldl (fun acc x => acc + f x) init = init + xs.foldl (fun acc x => acc + f x) 0 := by
+  induction xs generalizing init with
+  | nil => simp [Rat.add_zero]
+  | cons x rest ih =>
+    simp only [List.foldl_cons, Rat.zero_add]
+    rw [ih (init + f x), ih (f x), Rat.add_assoc]
+
+private theorem sumBy_cons {α : Type} (x : α) (xs : List α) (f : α → Rat) :
+    sumBy (x :: xs) f = f x + sumBy xs f := by
+  simp only [sumBy, List.foldl_cons, Rat.zero_add]
+  exact foldl_add_shift xs f (f x)
+
+private theorem sumBy_split2 {α : Type} (xs : List α) (p : α → Bool) (f : α → Rat) :
+    sumBy (xs.filter p) f + sumBy (xs.filter (fun x => !p x)) f = sumBy xs f := by
+  induction xs with
+  | nil => simp [sumBy, Rat.add_zero]
+  | cons x rest ih =>
+    by_cases hp : p x = true
+    · simp only [List.filter_cons, hp, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+      rw [sumBy_cons, sumBy_cons, Rat.add_assoc, ih]
+    · have hpf : p x = false := Bool.eq_false_iff.mpr hp
+      simp only [List.filter_cons, hpf, Bool.false_eq_true, Bool.not_false, ↓reduceIte]
+      rw [sumBy_cons, sumBy_cons]
+      have hcomm : sumBy (rest.filter p) f + (f x + sumBy (rest.filter (fun y => !p y)) f) =
+                   f x + (sumBy (rest.filter p) f + sumBy (rest.filter (fun y => !p y)) f) := by
+        rw [← Rat.add_assoc, Rat.add_comm (sumBy (rest.filter p) f) (f x), Rat.add_assoc]
+      rw [hcomm, ih]
+
+private theorem sumBy_split3 {α : Type} (xs : List α) (c : α → NSFR.NsfrMaturityBucket) (f : α → Rat) :
+    sumBy (xs.filter (fun x => c x == .lessThanSixMonths)) f +
+    sumBy (xs.filter (fun x => c x == .sixMonthsToLessThanOneYear)) f +
+    sumBy (xs.filter (fun x => c x == .oneYearOrMore)) f = sumBy xs f := by
+  induction xs with
+  | nil => simp [sumBy, Rat.add_zero]
+  | cons x rest ih =>
+    cases hc : c x
+    · have hfl : (List.filter (fun y => c y == .lessThanSixMonths) (x :: rest)) =
+          x :: List.filter (fun y => c y == .lessThanSixMonths) rest := by simp [hc]
+      have hfm : (List.filter (fun y => c y == .sixMonthsToLessThanOneYear) (x :: rest)) =
+          List.filter (fun y => c y == .sixMonthsToLessThanOneYear) rest := by simp [hc]
+      have hfh : (List.filter (fun y => c y == .oneYearOrMore) (x :: rest)) =
+          List.filter (fun y => c y == .oneYearOrMore) rest := by simp [hc]
+      rw [hfl, hfm, hfh, sumBy_cons, sumBy_cons, Rat.add_assoc, Rat.add_assoc,
+          ← Rat.add_assoc (sumBy (List.filter (fun y => c y == .lessThanSixMonths) rest) f), ih]
+    · have hfl : (List.filter (fun y => c y == .lessThanSixMonths) (x :: rest)) =
+          List.filter (fun y => c y == .lessThanSixMonths) rest := by simp [hc]
+      have hfm : (List.filter (fun y => c y == .sixMonthsToLessThanOneYear) (x :: rest)) =
+          x :: List.filter (fun y => c y == .sixMonthsToLessThanOneYear) rest := by simp [hc]
+      have hfh : (List.filter (fun y => c y == .oneYearOrMore) (x :: rest)) =
+          List.filter (fun y => c y == .oneYearOrMore) rest := by simp [hc]
+      rw [hfl, hfm, hfh, sumBy_cons, sumBy_cons]
+      rw [← Rat.add_assoc (sumBy (List.filter (fun y => c y == .lessThanSixMonths) rest) f),
+          Rat.add_comm (sumBy (List.filter (fun y => c y == .lessThanSixMonths) rest) f) (f x),
+          Rat.add_assoc (f x), Rat.add_assoc (f x), ih]
+    · have hfl : (List.filter (fun y => c y == .lessThanSixMonths) (x :: rest)) =
+          List.filter (fun y => c y == .lessThanSixMonths) rest := by simp [hc]
+      have hfm : (List.filter (fun y => c y == .sixMonthsToLessThanOneYear) (x :: rest)) =
+          List.filter (fun y => c y == .sixMonthsToLessThanOneYear) rest := by simp [hc]
+      have hfh : (List.filter (fun y => c y == .oneYearOrMore) (x :: rest)) =
+          x :: List.filter (fun y => c y == .oneYearOrMore) rest := by simp [hc]
+      rw [hfl, hfm, hfh, sumBy_cons, sumBy_cons]
+      rw [← Rat.add_assoc (sumBy (List.filter (fun y => c y == .lessThanSixMonths) rest) f +
+            sumBy (List.filter (fun y => c y == .sixMonthsToLessThanOneYear) rest) f) (f x),
+          Rat.add_comm (sumBy (List.filter (fun y => c y == .lessThanSixMonths) rest) f +
+            sumBy (List.filter (fun y => c y == .sixMonthsToLessThanOneYear) rest) f) (f x),
+          Rat.add_assoc (f x), ih]
+
+/-- Attachment C, Paragraph 22: Splitting an amortising loan across `<1y` and `>=1y` RSF buckets
+    exact-conserves total carrying value. -/
+theorem splitAmortisingLoanForRsf_conserves_principal
+    (idPrefix : String) (lt1yCat ge1yCat : NSFR.RsfCategory)
+    (legs : List (Money × Nat))
+    (enc : NSFR.EncumbrancePeriod) (interdep : Bool) :
+    sumBy (splitAmortisingLoanForRsf idPrefix lt1yCat ge1yCat legs enc interdep) (·.carryingValue) =
+      sumBy legs (fun (a, _) => nonNeg a) := by
+  simp only [splitAmortisingLoanForRsf, sumBy, List.foldl_cons, List.foldl_nil, Rat.zero_add]
+  have h1 : legs.filter (fun (_, d) => d ≥ 365) = legs.filter (fun x => !(decide (x.2 < 365))) := by
+    congr 1
+    funext ⟨_, d⟩
+    by_cases h : d < 365
+    · simp [h, Nat.not_le_of_gt h]
+    · simp [h, Nat.not_lt.mp h]
+  rw [h1]
+  exact sumBy_split2 legs (fun x => decide (x.2 < 365)) (fun (a, _) => nonNeg a)
+
+/-- Attachment C, Paragraphs 8 & 11(c): Splitting liability cash flows across `<6m`, `6m..<1y`,
+    and `>=1y` ASF buckets exact-conserves total carrying value. -/
+theorem splitLiabilityCashFlowsForAsf_conserves_carrying
+    (idPrefix : String) (lt6mCat sixTo1yCat ge1yCat : NSFR.AsfCategory)
+    (legs : List (Money × Nat)) (interdep : Bool) :
+    sumBy (splitLiabilityCashFlowsForAsf idPrefix lt6mCat sixTo1yCat ge1yCat legs interdep) (·.carryingValue) =
+      sumBy legs (fun (a, _) => nonNeg a) := by
+  simp only [splitLiabilityCashFlowsForAsf, sumBy, List.foldl_cons, List.foldl_nil, Rat.zero_add]
+  exact sumBy_split3 legs (fun (_, d) => classifyNsfrDays d) (fun (a, _) => nonNeg a)
+
+/-- Attachment A, Paragraphs 31 & 66: Cash inflows from HQLA assets or non-financial revenues
+    are never eligible as LCR inflows. -/
+theorem cashFlow_hqla_and_nonFinRev_excluded (f : ContractualCashFlow) :
+    (f.countedInHqla = true → f.isEligibleLcrInflow = false) ∧
+    (f.isNonFinancialRevenue = true → f.isEligibleLcrInflow = false) := by
+  constructor <;> intro h <;> simp [ContractualCashFlow.isEligibleLcrInflow, h]
+
+/-- Attachment C, Paragraph 37(b): `netDerivativeRsf` is always non-negative. -/
+theorem nsfr_netDerivativeRsf_nonneg (d : NsfrDerivativeInput) :
+    0 ≤ d.netDerivativeRsf := by
+  simp only [NsfrDerivativeInput.netDerivativeRsf, nonNeg]
+  exact rat_le_max_right _ _
 
 end APS210.Theorems
