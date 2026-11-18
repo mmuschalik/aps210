@@ -213,7 +213,12 @@ def table3RateExpr : SExpr :=
     (.litRat 0 1)
 
 def table3OutflowExpr : SExpr :=
-  .binOp .mul (.unOp .nonNeg (.col "amount")) table3RateExpr
+  .ite
+    (.binOp .and
+      (.binOp .eq (.col "category") (.litStr "derivative_valuation_largest_30d_flow_24m"))
+      (.col "has_apra_alt_amount"))
+    (.unOp .nonNeg (.col "apra_alt_amount"))
+    (.binOp .mul (.unOp .nonNeg (.col "amount")) table3RateExpr)
 
 /-- Attachment A, Table 4 & Paragraphs 54–66: Cash inflow expression. -/
 def inflowRateExpr : SExpr :=
@@ -256,10 +261,12 @@ def lcrProgram : Program :=
         (audFilter (.table "hqla_assets")))
   let para9eGrouped :=
     .groupBy ["currency"] [("cur_total", .sum, .col "val")] para9eRel
+  let capsDedup :=
+    .groupBy ["currency"] [("cap", .min, .unOp .nonNeg (.col "cap"))] (.table "foreign_sov_currency_caps")
   let para9eJoined :=
     .withColumns
       [("capped_val", .binOp .min (.col "cur_total") (.unOp .nonNeg (.coalesceZero (.col "cap"))))]
-      (.leftJoin "currency" para9eGrouped (.table "foreign_sov_currency_caps"))
+      (.leftJoin "currency" para9eGrouped capsDedup)
   { name := "evaluate_lcr"
     tableParams :=
       [ ("hqla_assets", ["category", "currency", "market_value", "convertible_to_cash_anytime",
@@ -275,11 +282,12 @@ def lcrProgram : Program :=
           "category_tainted_by_early_withdrawal", "has_host_override",
           "host_override_rate", "is_stable", "above_guarantee_limit_or_250k",
           "is_online_account", "no_established_relationship", "is_heavily_rate_driven"])
-      , ("other_outflows", ["category", "currency", "amount", "custom_rate"])
+      , ("other_outflows", ["category", "currency", "amount", "custom_rate", "has_apra_alt_amount", "apra_alt_amount"])
       , ("inflows", ["category", "currency", "amount", "is_fully_performing", "counted_in_hqla"])
       , ("foreign_sov_currency_caps", ["currency", "cap"]) ]
     scalarParams :=
-      [ ("is_aud_only", .bool), ("is_level2", .bool), ("required_min_rate", .rat)
+      [ ("is_locally_incorporated", .bool)
+      , ("is_aud_only", .bool), ("is_level2", .bool), ("required_min_rate", .rat)
       , ("delta_hqla1", .rat), ("delta_hqla2a", .rat), ("delta_hqla2b", .rat)
       , ("clf_recognised", .rat), ("foreign_ho_facility_eligible", .rat)
       , ("has_apra_inflow_cap_override", .bool), ("apra_inflow_cap_override", .rat)
@@ -314,7 +322,9 @@ def lcrProgram : Program :=
       , ("stock_ex_clf", .scalar (.unOp .nonNeg (.binOp .sub
           (.binOp .add (.col "unadj_hqla1") (.binOp .add (.col "unadj_hqla2a") (.col "unadj_hqla2b")))
           (.binOp .add (.col "excess_15") (.col "excess_40")))))
-      , ("stock_of_hqla", .scalar (.binOp .add (.col "stock_ex_clf") (.unOp .nonNeg (.col "clf_recognised"))))
+      , ("eff_clf_recognised", .scalar (.ite (.binOp .and (.var "is_locally_incorporated") (.var "is_aud_only"))
+          (.unOp .nonNeg (.col "clf_recognised")) (.litRat 0 1)))
+      , ("stock_of_hqla", .scalar (.binOp .add (.col "stock_ex_clf") (.col "eff_clf_recognised")))
       , ("retail_out", .agg .sum (audFilter (.table "retail_deposits")) retailOutflowExpr)
       , ("other_out", .agg .sum (audFilter (.table "other_outflows")) table3OutflowExpr)
       , ("gross_outflows", .scalar (.binOp .add (.col "retail_out") (.col "other_out")))
@@ -325,8 +335,10 @@ def lcrProgram : Program :=
           (.binOp .mul (.litRat 75 100) (.col "gross_outflows"))))
       , ("capped_inflows", .scalar (.binOp .min (.col "gross_inflows") (.col "effective_inflow_cap")))
       , ("net_cash_outflows", .scalar (.unOp .nonNeg (.binOp .sub (.col "gross_outflows") (.col "capped_inflows"))))
-      , ("ho_facility_recognised", .scalar (.binOp .min (.unOp .nonNeg (.col "foreign_ho_facility_eligible"))
-          (.binOp .mul (.litRat 50 100) (.binOp .mul (.col "required_min_rate") (.col "net_cash_outflows")))))
+      , ("ho_facility_recognised", .scalar (.ite (.unOp .not (.var "is_locally_incorporated"))
+          (.binOp .min (.unOp .nonNeg (.col "foreign_ho_facility_eligible"))
+            (.binOp .mul (.litRat 50 100) (.binOp .mul (.col "required_min_rate") (.col "net_cash_outflows"))))
+          (.litRat 0 1)))
       , ("lcr_numerator", .scalar (.binOp .add (.col "stock_of_hqla") (.col "ho_facility_recognised")))
       , ("compliant", .scalar
           (.ite (.binOp .le (.col "net_cash_outflows") (.litRat 0 1))

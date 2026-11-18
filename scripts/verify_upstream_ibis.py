@@ -79,6 +79,7 @@ def main() -> None:
             "account_id": ["a1", "a2", "a3", "a4"],
             "customer_group_id": ["cg1", "cg1", "cg2", "cg3"],
             "customer_type": ["retail", "retail", "sme", "sme"],
+            "managed_as_retail": [True, True, True, True],
             "product_category": ["prodA", "prodA", "prodB", "prodB"],
             "balance": [
                 Decimal(200000),
@@ -196,6 +197,14 @@ def main() -> None:
         Decimal(80),
         Decimal(20),
         Decimal(460),
+        True,
+        True,
+        True,
+        True,
+        False,
+        False,
+        False,
+        Decimal(0),
     )
 
     results = {}

@@ -157,7 +157,7 @@ def applyEncumbranceFactor
     (enc : EncumbrancePeriod)
     (exceptionalCbApraFactor : Option Rate := none) : Rate :=
   match exceptionalCbApraFactor with
-  | some r => r
+  | some r => nonNeg r
   | none =>
     match enc with
     | .unencumbered => base

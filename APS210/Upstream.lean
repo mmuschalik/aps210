@@ -150,6 +150,7 @@ structure DepositAccount where
   accountId : String
   customerGroupId : String
   customerType : DepositCustomerType
+  managedAsRetail : Bool := true
   productCategory : String
   balance : Money
   hasEarlyWithdrawalNoPenalty : Bool
@@ -164,7 +165,7 @@ structure DepositClassificationSummary where
 
 def evaluateDeposits (accounts : List DepositAccount) : DepositClassificationSummary :=
   let custTotals := groupByKey (·.customerGroupId) accounts |>.map (fun (cg, grp) =>
-    (cg, sumBy grp (·.balance)))
+    (cg, sumBy grp (fun a => nonNeg a.balance)))
   let poolTaints := groupByKey (·.productCategory) accounts |>.map (fun (pc, grp) =>
     (pc, grp.any (·.hasEarlyWithdrawalNoPenalty)))
   let lookupTotal (cg : String) : Money :=
@@ -172,18 +173,19 @@ def evaluateDeposits (accounts : List DepositAccount) : DepositClassificationSum
   let lookupTaint (pc : String) : Bool :=
     (poolTaints.find? (fun (k, _) => k == pc)).map (·.2) |>.getD false
   let isSmeEligible (a : DepositAccount) : Bool :=
-    a.customerType == .sme && lookupTotal a.customerGroupId < 2000000
+    a.customerType == .sme && a.managedAsRetail && lookupTotal a.customerGroupId < 2000000
   let fcsInsuredShare (a : DepositAccount) : Money :=
+    let bal := nonNeg a.balance
     if a.customerType == .retail || isSmeEligible a then
       let tot := lookupTotal a.customerGroupId
       if tot == 0 then 0
-      else min a.balance (a.balance * min tot 250000 / tot)
+      else min bal (bal * min tot 250000 / tot)
     else 0
   let isExcludedTerm (a : DepositAccount) : Bool :=
     a.residualDays > 30 && !(lookupTaint a.productCategory)
-  { smeEligibleDeposits := sumBy (accounts.filter isSmeEligible) (·.balance)
+  { smeEligibleDeposits := sumBy (accounts.filter isSmeEligible) (fun a => nonNeg a.balance)
   , fcsInsuredDeposits := sumBy accounts fcsInsuredShare
-  , excludedTermDeposits := sumBy (accounts.filter isExcludedTerm) (·.balance)
+  , excludedTermDeposits := sumBy (accounts.filter isExcludedTerm) (fun a => nonNeg a.balance)
   }
 
 -- ============================================================================
@@ -287,6 +289,9 @@ def parseCreditRatingStr : String → CreditRating
   | "BBB" => .bbb
   | "BBB-" => .bbbMinus
   | "below_bbb_minus" => .belowBbbMinus
+  | "BB+" | "BB" | "BB-" => .belowBbbMinus
+  | "B+" | "B" | "B-" => .bRating
+  | "CCC" | "below_b_minus" => .belowBMinus
   | _ => .unrated
 
 def resolveEcaiByExposure (rows : List EcaiAssessmentRow) : List (String × External.CreditRatingGrade) :=
@@ -337,26 +342,39 @@ def SftLegRow.toLcrLeg (s : SftLegRow) : LCR.ShortTermSftLeg :=
   }
 
 structure ClfSummaryInput where
-  eligible : Bool := false
+  approvedByApra : Bool := false
   contractualAmount : Money := 0
   pledgedZeroRunoff : Money := 0
   receivedZeroInflow : Money := 0
   collateralAfterMargin : Money := 0
+  collateralDiversified : Bool := false
+  annualReapprovalCurrent : Bool := false
+  includedInFundingStrategy : Bool := false
+  balanceSheetEffortsExhausted : Bool := false
+  clfDrawnNonIntraday : Bool := false
+  drawdownAttestedAndNotifiedToApra : Bool := false
+  collateralBecameIneligibleWithin30Days : Bool := false
+  collateralDaysSinceIneligible : Nat := 0
   deriving DecidableEq, Repr
 
+def ClfSummaryInput.toLcrClfInput (c : ClfSummaryInput) : LCR.ClfInput :=
+  { approvedByApra := c.approvedByApra
+  , contractualAmount := c.contractualAmount
+  , pledgedUnderZeroRunoffSecFunding := c.pledgedZeroRunoff
+  , receivedUnderZeroInflowSecLending := c.receivedZeroInflow
+  , collateralHeldAfterRbaMargins := c.collateralAfterMargin
+  , collateralDiversified := c.collateralDiversified
+  , annualReapprovalCurrent := c.annualReapprovalCurrent
+  , includedInFundingStrategy := c.includedInFundingStrategy
+  , balanceSheetEffortsExhausted := c.balanceSheetEffortsExhausted
+  , clfDrawnNonIntraday := c.clfDrawnNonIntraday
+  , drawdownAttestedAndNotifiedToApra := c.drawdownAttestedAndNotifiedToApra
+  , collateralBecameIneligibleWithin30Days := c.collateralBecameIneligibleWithin30Days
+  , collateralDaysSinceIneligible := some c.collateralDaysSinceIneligible
+  }
+
 def ClfSummaryInput.recognised (c : ClfSummaryInput) : Money :=
-  let clf : LCR.ClfInput :=
-    { approvedByApra := c.eligible
-    , contractualAmount := c.contractualAmount
-    , pledgedUnderZeroRunoffSecFunding := c.pledgedZeroRunoff
-    , receivedUnderZeroInflowSecLending := c.receivedZeroInflow
-    , collateralHeldAfterRbaMargins := c.collateralAfterMargin
-    , collateralDiversified := c.eligible
-    , annualReapprovalCurrent := c.eligible
-    , includedInFundingStrategy := c.eligible
-    , balanceSheetEffortsExhausted := c.eligible
-    }
-  clf.recognisedAmount
+  c.toLcrClfInput.recognisedAmount
 
 -- ============================================================================
 -- Unified Upstream Evaluation & Compliance Properties
@@ -409,7 +427,8 @@ def evaluateUpstream (input : UpstreamInput) : UpstreamResult :=
   let nsfrLt6m := sumBy (input.positions.filter (fun p => classifyNsfrBucketCal input.reportingDate (p.residualDays input.reportingDate) == .lt6m)) (·.amount)
   let nsfr6mTo1y := sumBy (input.positions.filter (fun p => classifyNsfrBucketCal input.reportingDate (p.residualDays input.reportingDate) == .sixMTo1y)) (·.amount)
   let nsfrGe1y := sumBy (input.positions.filter (fun p => classifyNsfrBucketCal input.reportingDate (p.residualDays input.reportingDate) == .ge1y)) (·.amount)
-  let encGe1y := sumBy (input.positions.filter (fun p => p.isEncumbered && p.encumbranceDays input.reportingDate ≥ 365)) (·.amount)
+  let encGe1y := sumBy (input.positions.filter (fun p =>
+    p.isEncumbered && classifyNsfrBucketCal input.reportingDate (p.encumbranceDays input.reportingDate) == .ge1y)) (·.amount)
   let (dOut, dIn) := netDerivativeOutflowInflow input.derivativeTrades
   let dep := evaluateDeposits input.depositAccounts
   let ecaiResolved := resolveEcaiByExposure input.ecaiAssessments

@@ -389,4 +389,76 @@ theorem nsfr_netDerivativeRsf_nonneg (d : NsfrDerivativeInput) :
   simp only [NsfrDerivativeInput.netDerivativeRsf, nonNeg]
   exact rat_le_max_right _ _
 
+-- ============================================================================
+-- Universal Regulatory Condition, Upstream & Monotonicity Invariants
+-- ============================================================================
+
+/-- Attachment A, Paragraphs 16–21 & 25: If any CLF process/operational/diversification/grace
+    condition fails (`processEligible = false`), recognised CLF is 0. -/
+theorem clf_processEligible_false_recognised_zero (clf : ClfInput)
+    (h : clf.processEligible = false) :
+    clf.recognisedAmount = 0 := by
+  simp [ClfInput.recognisedAmount, h]
+
+/-- Attachment A, Paragraphs 22–25: Failing any operational requirement zeroes HQLA asset value. -/
+theorem hqla_operational_false_zero (basis : ConsolidationBasis) (a : HqlaAsset)
+    (h : a.operational.isMet = false) :
+    a.valueAfterHaircut basis = 0 := by
+  simp [HqlaAsset.valueAfterHaircut, HqlaAsset.eligibleMarketValue, h]
+
+/-- Attachment A, Paragraph 29: Non-transferable Level 2 HQLA with no `level2TransferableCap`
+    contributes 0 at Level 2. -/
+theorem hqla_level2_nontransferable_zero_cap (a : HqlaAsset)
+    (hf : a.freelyTransferableAtLevel2 = false)
+    (hc : a.level2TransferableCap = none) :
+    a.eligibleMarketValue .level2 = 0 := by
+  have hmin0 : min (nonNeg a.marketValue) (nonNeg 0) = 0 := by
+    have h0 : nonNeg 0 = 0 := by native_decide
+    rw [h0]
+    have hnn : 0 ≤ nonNeg a.marketValue := rat_le_max_right _ _
+    change (if nonNeg a.marketValue ≤ 0 then nonNeg a.marketValue else 0) = 0
+    by_cases hle : nonNeg a.marketValue ≤ 0
+    · simp [hle]; exact Rat.le_antisymm hle hnn
+    · simp [hle]
+  simp only [HqlaAsset.eligibleMarketValue, hf, hc, Option.getD_none]
+  rw [hmin0]
+  simp
+
+/-- Upstream schema invariant (Attachment A Paragraph 17): without current annual re-approval,
+    upstream recognised CLF is always 0. -/
+theorem upstream_clf_requires_reapproval (input : Upstream.UpstreamInput)
+    (h : input.clf.annualReapprovalCurrent = false) :
+    (Upstream.evaluateUpstream input).clfRecognisedAmount = 0 := by
+  simp [Upstream.evaluateUpstream, Upstream.ClfSummaryInput.recognised,
+    Upstream.ClfSummaryInput.toLcrClfInput, LCR.ClfInput.recognisedAmount,
+    LCR.ClfInput.processEligible, h]
+
+/-- Upstream schema invariant (Attachment A Paragraphs 17–20): without APRA approval,
+    upstream recognised CLF is always 0. -/
+theorem upstream_clf_requires_apra_approval (input : Upstream.UpstreamInput)
+    (h : input.clf.approvedByApra = false) :
+    (Upstream.evaluateUpstream input).clfRecognisedAmount = 0 := by
+  simp [Upstream.evaluateUpstream, Upstream.ClfSummaryInput.recognised,
+    Upstream.ClfSummaryInput.toLcrClfInput, LCR.ClfInput.recognisedAmount, h]
+
+/-- Upstream schema invariant (Attachment A Paragraph 16(b)): without collateral diversification,
+    upstream recognised CLF is always 0. -/
+theorem upstream_clf_requires_diversification (input : Upstream.UpstreamInput)
+    (h : input.clf.collateralDiversified = false) :
+    (Upstream.evaluateUpstream input).clfRecognisedAmount = 0 := by
+  simp [Upstream.evaluateUpstream, Upstream.ClfSummaryInput.recognised,
+    Upstream.ClfSummaryInput.toLcrClfInput, LCR.ClfInput.recognisedAmount,
+    LCR.ClfInput.processEligible, h]
+
+/-- Monotonicity of ratio compliance: increasing denominator (`den₁ ≤ den₂`, `0 < den₁`, `0 ≤ minRate`)
+    never makes a non-compliant ratio compliant (more outflows never raise LCR compliance; more RSF never raises NSFR compliance). -/
+theorem checkRatio_monotone_den (num den₁ den₂ minRate : Rat)
+    (hm : 0 ≤ minRate) (hd1 : 0 < den₁) (hle : den₁ ≤ den₂)
+    (hc : (checkRatio num den₂ minRate).compliant = true) :
+    (checkRatio num den₁ minRate).compliant = true := by
+  have hnot1 : ¬(den₁ ≤ 0) := Rat.not_le.mpr hd1
+  have hnot2 : ¬(den₂ ≤ 0) := fun h2 => hnot1 (Rat.le_trans hle h2)
+  simp only [checkRatio, hnot1, hnot2, ↓reduceIte, decide_eq_true_eq] at hc ⊢
+  exact Rat.le_trans (Rat.mul_le_mul_of_nonneg_left hle hm) hc
+
 end APS210.Theorems

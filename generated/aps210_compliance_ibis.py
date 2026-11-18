@@ -17,7 +17,9 @@ def evaluate_compliance_gate(
     stress_testing_ok,
     loc_assessed_annually,
     loc_outage_min_days,
+    loc_covers_tz_holidays,
     in_financial_stress,
+    experiencing_severe_stress,
     notified_apra_immediately,
     lcr_aud_compliant,
     lcr_all_compliant,
@@ -32,6 +34,8 @@ def evaluate_compliance_gate(
     has_buffer_policy,
     buffer_policy_waived_during_stress,
     all_buffers_met,
+    has_custom_buffer_floor,
+    custom_buffer_floor_met,
     exclude_lcr_aud,
     exclude_lcr_all,
     exclude_mlh,
@@ -46,6 +50,13 @@ def evaluate_compliance_gate(
     override_nsfr,
     offshore_subs_all_ge_100pct,
     securitisation_lcr_ok,
+    spv_excluded_from_mlh_nsfr,
+    may_exclude_spv_from_mlh_nsfr,
+    has_apra_adj_or_excl,
+    apra_adj_complied,
+    seeks_prior_discretion,
+    notified_apra_discretion,
+    cf_survival_met,
 ):
     is_locally_incorporated = ibis.literal(bool(is_locally_incorporated))
     is_lcr_adi = ibis.literal(bool(is_lcr_adi))
@@ -67,7 +78,9 @@ def evaluate_compliance_gate(
     loc_outage_min_days = ibis.literal(
         Decimal(str(loc_outage_min_days)), type="decimal(38, 12)"
     )
+    loc_covers_tz_holidays = ibis.literal(bool(loc_covers_tz_holidays))
     in_financial_stress = ibis.literal(bool(in_financial_stress))
+    experiencing_severe_stress = ibis.literal(bool(experiencing_severe_stress))
     notified_apra_immediately = ibis.literal(bool(notified_apra_immediately))
     lcr_aud_compliant = ibis.literal(bool(lcr_aud_compliant))
     lcr_all_compliant = ibis.literal(bool(lcr_all_compliant))
@@ -84,6 +97,8 @@ def evaluate_compliance_gate(
         bool(buffer_policy_waived_during_stress)
     )
     all_buffers_met = ibis.literal(bool(all_buffers_met))
+    has_custom_buffer_floor = ibis.literal(bool(has_custom_buffer_floor))
+    custom_buffer_floor_met = ibis.literal(bool(custom_buffer_floor_met))
     exclude_lcr_aud = ibis.literal(bool(exclude_lcr_aud))
     exclude_lcr_all = ibis.literal(bool(exclude_lcr_all))
     exclude_mlh = ibis.literal(bool(exclude_mlh))
@@ -102,6 +117,13 @@ def evaluate_compliance_gate(
     override_nsfr = ibis.literal(Decimal(str(override_nsfr)), type="decimal(38, 12)")
     offshore_subs_all_ge_100pct = ibis.literal(bool(offshore_subs_all_ge_100pct))
     securitisation_lcr_ok = ibis.literal(bool(securitisation_lcr_ok))
+    spv_excluded_from_mlh_nsfr = ibis.literal(bool(spv_excluded_from_mlh_nsfr))
+    may_exclude_spv_from_mlh_nsfr = ibis.literal(bool(may_exclude_spv_from_mlh_nsfr))
+    has_apra_adj_or_excl = ibis.literal(bool(has_apra_adj_or_excl))
+    apra_adj_complied = ibis.literal(bool(apra_adj_complied))
+    seeks_prior_discretion = ibis.literal(bool(seeks_prior_discretion))
+    notified_apra_discretion = ibis.literal(bool(notified_apra_discretion))
+    cf_survival_met = ibis.literal(bool(cf_survival_met))
     required_aud_lcr = ibis.ifelse(
         exclude_lcr_aud,
         ibis.literal(0, type="decimal(38, 12)"),
@@ -174,11 +196,16 @@ def evaluate_compliance_gate(
     )
     loc_ok = is_locally_incorporated | (
         loc_assessed_annually
-        & (ibis.literal(3, type="decimal(38, 12)") <= loc_outage_min_days)
+        & (
+            (ibis.literal(3, type="decimal(38, 12)") <= loc_outage_min_days)
+            & loc_covers_tz_holidays
+        )
     )
     stress_ok = (~(is_lcr_adi)) | stress_testing_ok
     qualitative_compliant = base_governance_ok & (stress_ok & loc_ok)
-    stress_breach_permitted = in_financial_stress & notified_apra_immediately
+    stress_breach_permitted = in_financial_stress & (
+        experiencing_severe_stress & notified_apra_immediately
+    )
     lcr_aud_ok = exclude_lcr_aud | (
         (~(is_locally_incorporated))
         | (
@@ -204,14 +231,31 @@ def evaluate_compliance_gate(
     nsfr_ok = (~(is_locally_incorporated & is_lcr_adi)) | (
         exclude_nsfr | (nsfr_compliant & ((~(has_level2_group)) | nsfr_l2_compliant))
     )
-    buffer_policy_ok = has_buffer_policy & (
-        all_buffers_met | (buffer_policy_waived_during_stress & stress_breach_permitted)
+    buffer_policy_ok = has_buffer_policy & ibis.ifelse(
+        has_custom_buffer_floor,
+        custom_buffer_floor_met,
+        (
+            all_buffers_met
+            | (buffer_policy_waived_during_stress & stress_breach_permitted)
+        ),
+    )
+    sec_ok = securitisation_lcr_ok & (
+        (~(spv_excluded_from_mlh_nsfr)) | may_exclude_spv_from_mlh_nsfr
+    )
+    apra_discretion_ok = ((~(has_apra_adj_or_excl)) | apra_adj_complied) & (
+        (~(seeks_prior_discretion)) | notified_apra_discretion
     )
     quantitative_compliant = lcr_ok & (
         mlh_ok
         & (
             nsfr_ok
-            & (buffer_policy_ok & (offshore_subs_all_ge_100pct & securitisation_lcr_ok))
+            & (
+                buffer_policy_ok
+                & (
+                    offshore_subs_all_ge_100pct
+                    & (sec_ok & (apra_discretion_ok & cf_survival_met))
+                )
+            )
         )
     )
     overall_compliant = qualitative_compliant & quantitative_compliant

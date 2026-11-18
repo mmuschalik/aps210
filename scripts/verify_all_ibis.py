@@ -39,6 +39,15 @@ OBS_SCHEMA = ibis.schema(
     }
 )
 
+NSFR_DERIV_SCHEMA = ibis.schema(
+    {
+        "netting_set_id": "string",
+        "has_eligible_mna": "boolean",
+        "mtm_asset": "decimal(38, 12)",
+        "mtm_liability": "decimal(38, 12)",
+    }
+)
+
 
 def main():
     con = ibis.duckdb.connect()
@@ -138,17 +147,24 @@ def main():
         schema=OBS_SCHEMA,
     )
 
+    empty_deriv_tbl = ibis.memtable(
+        pd.DataFrame([], columns=list(NSFR_DERIV_SCHEMA.names)),
+        schema=NSFR_DERIV_SCHEMA,
+    )
+
     nsfr_res = {
         k: con.execute(v)
         for k, v in evaluate_nsfr(
             asf_tbl,
             rsf_tbl,
             obs_tbl,
+            empty_deriv_tbl,
             required_min_rate=Decimal("1.00"),
             gross_deriv_liabilities=Decimal(10),
             variation_margin_posted=Decimal(5),
             gross_deriv_assets=Decimal(8),
             eligible_cash_vm_received=Decimal(0),
+            cash_vm_eligibility_ok=True,
             has_clf_limit=True,
             recognised_clf_limit=Decimal(20),
             host_ala_in_lcr_limit=Decimal(0),
@@ -189,11 +205,13 @@ def main():
             asf_tbl,
             rsf_no_clf,
             obs_tbl,
+            empty_deriv_tbl,
             required_min_rate=Decimal("1.00"),
             gross_deriv_liabilities=Decimal(0),
             variation_margin_posted=Decimal(0),
             gross_deriv_assets=Decimal(0),
             eligible_cash_vm_received=Decimal(0),
+            cash_vm_eligibility_ok=True,
             has_clf_limit=False,
             recognised_clf_limit=Decimal(999),
             host_ala_in_lcr_limit=Decimal(0),
@@ -244,7 +262,9 @@ def main():
             stress_testing_ok=True,
             loc_assessed_annually=False,
             loc_outage_min_days=Decimal(0),
+            loc_covers_tz_holidays=True,
             in_financial_stress=False,
+            experiencing_severe_stress=False,
             notified_apra_immediately=False,
             lcr_aud_compliant=True,
             lcr_all_compliant=True,
@@ -259,6 +279,8 @@ def main():
             has_buffer_policy=True,
             buffer_policy_waived_during_stress=False,
             all_buffers_met=True,
+            has_custom_buffer_floor=False,
+            custom_buffer_floor_met=True,
             exclude_lcr_aud=False,
             exclude_lcr_all=False,
             exclude_mlh=False,
@@ -273,6 +295,13 @@ def main():
             override_nsfr=Decimal(0),
             offshore_subs_all_ge_100pct=True,
             securitisation_lcr_ok=True,
+            spv_excluded_from_mlh_nsfr=False,
+            may_exclude_spv_from_mlh_nsfr=True,
+            has_apra_adj_or_excl=False,
+            apra_adj_complied=True,
+            seeks_prior_discretion=False,
+            notified_apra_discretion=True,
+            cf_survival_met=True,
         ).items()
     }
     assert bool(comp_res["overall_compliant"]) is True, comp_res

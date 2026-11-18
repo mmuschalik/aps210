@@ -18,15 +18,23 @@ def evaluate_aps210_upstream(
     sft_legs,
     reporting_date,
     is_aud_only,
-    clf_eligible,
+    clf_approved_by_apra,
     clf_contractual,
     clf_pledged_zero_runoff,
     clf_received_zero_inflow,
     clf_collateral_after_margin,
+    clf_collateral_diversified,
+    clf_annual_reapproval_current,
+    clf_included_in_funding_strategy,
+    clf_balance_sheet_efforts_exhausted,
+    clf_drawn_non_intraday,
+    clf_drawdown_attested_notified,
+    clf_collateral_became_ineligible_30d,
+    clf_collateral_days_since_ineligible,
 ):
     reporting_date = ibis.literal(str(reporting_date), type="date")
     is_aud_only = ibis.literal(bool(is_aud_only))
-    clf_eligible = ibis.literal(bool(clf_eligible))
+    clf_approved_by_apra = ibis.literal(bool(clf_approved_by_apra))
     clf_contractual = ibis.literal(
         Decimal(str(clf_contractual)), type="decimal(38, 12)"
     )
@@ -38,6 +46,22 @@ def evaluate_aps210_upstream(
     )
     clf_collateral_after_margin = ibis.literal(
         Decimal(str(clf_collateral_after_margin)), type="decimal(38, 12)"
+    )
+    clf_collateral_diversified = ibis.literal(bool(clf_collateral_diversified))
+    clf_annual_reapproval_current = ibis.literal(bool(clf_annual_reapproval_current))
+    clf_included_in_funding_strategy = ibis.literal(
+        bool(clf_included_in_funding_strategy)
+    )
+    clf_balance_sheet_efforts_exhausted = ibis.literal(
+        bool(clf_balance_sheet_efforts_exhausted)
+    )
+    clf_drawn_non_intraday = ibis.literal(bool(clf_drawn_non_intraday))
+    clf_drawdown_attested_notified = ibis.literal(bool(clf_drawdown_attested_notified))
+    clf_collateral_became_ineligible_30d = ibis.literal(
+        bool(clf_collateral_became_ineligible_30d)
+    )
+    clf_collateral_days_since_ineligible = ibis.literal(
+        Decimal(str(clf_collateral_days_since_ineligible)), type="decimal(38, 12)"
     )
     six_months_days = (
         (reporting_date + ibis.interval(months=6))
@@ -283,13 +307,7 @@ def evaluate_aps210_upstream(
                     )
                 )
             ).filter(
-                lambda t: (
-                    t["is_encumbered"]
-                    & (
-                        t["encumbrance_days"]
-                        >= ibis.literal(365, type="decimal(38, 12)")
-                    )
-                )
+                lambda t: t["is_encumbered"] & (t["encumbrance_days"] >= one_year_days)
             )
         )
         .aggregate(val=lambda t: (t["amount"]).sum())["val"]
@@ -398,7 +416,12 @@ def evaluate_aps210_upstream(
                         (
                             (deposit_accounts).mutate(
                                 cust_total_balance=lambda t: ibis.coalesce(
-                                    (t["balance"])
+                                    (
+                                        ibis.greatest(
+                                            t["balance"],
+                                            ibis.literal(0, type="decimal(38, 12)"),
+                                        )
+                                    )
                                     .sum()
                                     .over(ibis.window(group_by=["customer_group_id"])),
                                     ibis.literal(0, type="decimal(38, 12)"),
@@ -414,8 +437,11 @@ def evaluate_aps210_upstream(
                             is_sme_eligible=lambda t: (
                                 (t["customer_type"] == ibis.literal("sme"))
                                 & (
-                                    t["cust_total_balance"]
-                                    < ibis.literal(2000000, type="decimal(38, 12)")
+                                    t["managed_as_retail"]
+                                    & (
+                                        t["cust_total_balance"]
+                                        < ibis.literal(2000000, type="decimal(38, 12)")
+                                    )
                                 )
                             )
                         )
@@ -426,18 +452,29 @@ def evaluate_aps210_upstream(
                                 | (
                                     (t["customer_type"] == ibis.literal("sme"))
                                     & (
-                                        t["cust_total_balance"]
-                                        < ibis.literal(2000000, type="decimal(38, 12)")
+                                        t["managed_as_retail"]
+                                        & (
+                                            t["cust_total_balance"]
+                                            < ibis.literal(
+                                                2000000, type="decimal(38, 12)"
+                                            )
+                                        )
                                     )
                                 )
                             ),
                             ibis.least(
-                                t["balance"],
+                                ibis.greatest(
+                                    t["balance"],
+                                    ibis.literal(0, type="decimal(38, 12)"),
+                                ),
                                 ibis.ifelse(
                                     t["cust_total_balance"] == 0,
                                     ibis.literal(0, type="decimal(38, 12)"),
                                     (
-                                        t["balance"]
+                                        ibis.greatest(
+                                            t["balance"],
+                                            ibis.literal(0, type="decimal(38, 12)"),
+                                        )
                                         * ibis.least(
                                             t["cust_total_balance"],
                                             ibis.literal(
@@ -459,7 +496,11 @@ def evaluate_aps210_upstream(
                 )
             ).filter(lambda t: t["is_sme_eligible"])
         )
-        .aggregate(val=lambda t: (t["balance"]).sum())["val"]
+        .aggregate(
+            val=lambda t: (
+                ibis.greatest(t["balance"], ibis.literal(0, type="decimal(38, 12)"))
+            ).sum()
+        )["val"]
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),
     )
@@ -470,7 +511,12 @@ def evaluate_aps210_upstream(
                     (
                         (deposit_accounts).mutate(
                             cust_total_balance=lambda t: ibis.coalesce(
-                                (t["balance"])
+                                (
+                                    ibis.greatest(
+                                        t["balance"],
+                                        ibis.literal(0, type="decimal(38, 12)"),
+                                    )
+                                )
                                 .sum()
                                 .over(ibis.window(group_by=["customer_group_id"])),
                                 ibis.literal(0, type="decimal(38, 12)"),
@@ -486,8 +532,11 @@ def evaluate_aps210_upstream(
                         is_sme_eligible=lambda t: (
                             (t["customer_type"] == ibis.literal("sme"))
                             & (
-                                t["cust_total_balance"]
-                                < ibis.literal(2000000, type="decimal(38, 12)")
+                                t["managed_as_retail"]
+                                & (
+                                    t["cust_total_balance"]
+                                    < ibis.literal(2000000, type="decimal(38, 12)")
+                                )
                             )
                         )
                     )
@@ -498,18 +547,26 @@ def evaluate_aps210_upstream(
                             | (
                                 (t["customer_type"] == ibis.literal("sme"))
                                 & (
-                                    t["cust_total_balance"]
-                                    < ibis.literal(2000000, type="decimal(38, 12)")
+                                    t["managed_as_retail"]
+                                    & (
+                                        t["cust_total_balance"]
+                                        < ibis.literal(2000000, type="decimal(38, 12)")
+                                    )
                                 )
                             )
                         ),
                         ibis.least(
-                            t["balance"],
+                            ibis.greatest(
+                                t["balance"], ibis.literal(0, type="decimal(38, 12)")
+                            ),
                             ibis.ifelse(
                                 t["cust_total_balance"] == 0,
                                 ibis.literal(0, type="decimal(38, 12)"),
                                 (
-                                    t["balance"]
+                                    ibis.greatest(
+                                        t["balance"],
+                                        ibis.literal(0, type="decimal(38, 12)"),
+                                    )
                                     * ibis.least(
                                         t["cust_total_balance"],
                                         ibis.literal(250000, type="decimal(38, 12)"),
@@ -540,7 +597,12 @@ def evaluate_aps210_upstream(
                         (
                             (deposit_accounts).mutate(
                                 cust_total_balance=lambda t: ibis.coalesce(
-                                    (t["balance"])
+                                    (
+                                        ibis.greatest(
+                                            t["balance"],
+                                            ibis.literal(0, type="decimal(38, 12)"),
+                                        )
+                                    )
                                     .sum()
                                     .over(ibis.window(group_by=["customer_group_id"])),
                                     ibis.literal(0, type="decimal(38, 12)"),
@@ -556,8 +618,11 @@ def evaluate_aps210_upstream(
                             is_sme_eligible=lambda t: (
                                 (t["customer_type"] == ibis.literal("sme"))
                                 & (
-                                    t["cust_total_balance"]
-                                    < ibis.literal(2000000, type="decimal(38, 12)")
+                                    t["managed_as_retail"]
+                                    & (
+                                        t["cust_total_balance"]
+                                        < ibis.literal(2000000, type="decimal(38, 12)")
+                                    )
                                 )
                             )
                         )
@@ -568,18 +633,29 @@ def evaluate_aps210_upstream(
                                 | (
                                     (t["customer_type"] == ibis.literal("sme"))
                                     & (
-                                        t["cust_total_balance"]
-                                        < ibis.literal(2000000, type="decimal(38, 12)")
+                                        t["managed_as_retail"]
+                                        & (
+                                            t["cust_total_balance"]
+                                            < ibis.literal(
+                                                2000000, type="decimal(38, 12)"
+                                            )
+                                        )
                                     )
                                 )
                             ),
                             ibis.least(
-                                t["balance"],
+                                ibis.greatest(
+                                    t["balance"],
+                                    ibis.literal(0, type="decimal(38, 12)"),
+                                ),
                                 ibis.ifelse(
                                     t["cust_total_balance"] == 0,
                                     ibis.literal(0, type="decimal(38, 12)"),
                                     (
-                                        t["balance"]
+                                        ibis.greatest(
+                                            t["balance"],
+                                            ibis.literal(0, type="decimal(38, 12)"),
+                                        )
                                         * ibis.least(
                                             t["cust_total_balance"],
                                             ibis.literal(
@@ -601,7 +677,11 @@ def evaluate_aps210_upstream(
                 )
             ).filter(lambda t: t["is_excluded_term_deposit"])
         )
-        .aggregate(val=lambda t: (t["balance"]).sum())["val"]
+        .aggregate(
+            val=lambda t: (
+                ibis.greatest(t["balance"], ibis.literal(0, type="decimal(38, 12)"))
+            ).sum()
+        )["val"]
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),
     )
@@ -993,6 +1073,38 @@ def evaluate_aps210_upstream(
                                     t["rating_str"] == "below_bbb_minus",
                                     ibis.literal(4, type="decimal(38, 12)"),
                                 ),
+                                (
+                                    t["rating_str"] == "BB+",
+                                    ibis.literal(4, type="decimal(38, 12)"),
+                                ),
+                                (
+                                    t["rating_str"] == "BB",
+                                    ibis.literal(4, type="decimal(38, 12)"),
+                                ),
+                                (
+                                    t["rating_str"] == "BB-",
+                                    ibis.literal(4, type="decimal(38, 12)"),
+                                ),
+                                (
+                                    t["rating_str"] == "B+",
+                                    ibis.literal(5, type="decimal(38, 12)"),
+                                ),
+                                (
+                                    t["rating_str"] == "B",
+                                    ibis.literal(5, type="decimal(38, 12)"),
+                                ),
+                                (
+                                    t["rating_str"] == "B-",
+                                    ibis.literal(5, type="decimal(38, 12)"),
+                                ),
+                                (
+                                    t["rating_str"] == "CCC",
+                                    ibis.literal(6, type="decimal(38, 12)"),
+                                ),
+                                (
+                                    t["rating_str"] == "below_b_minus",
+                                    ibis.literal(6, type="decimal(38, 12)"),
+                                ),
                                 else_=ibis.literal(7, type="decimal(38, 12)"),
                             )
                         )
@@ -1089,6 +1201,38 @@ def evaluate_aps210_upstream(
                                     (
                                         t["rating_str"] == "below_bbb_minus",
                                         ibis.literal(4, type="decimal(38, 12)"),
+                                    ),
+                                    (
+                                        t["rating_str"] == "BB+",
+                                        ibis.literal(4, type="decimal(38, 12)"),
+                                    ),
+                                    (
+                                        t["rating_str"] == "BB",
+                                        ibis.literal(4, type="decimal(38, 12)"),
+                                    ),
+                                    (
+                                        t["rating_str"] == "BB-",
+                                        ibis.literal(4, type="decimal(38, 12)"),
+                                    ),
+                                    (
+                                        t["rating_str"] == "B+",
+                                        ibis.literal(5, type="decimal(38, 12)"),
+                                    ),
+                                    (
+                                        t["rating_str"] == "B",
+                                        ibis.literal(5, type="decimal(38, 12)"),
+                                    ),
+                                    (
+                                        t["rating_str"] == "B-",
+                                        ibis.literal(5, type="decimal(38, 12)"),
+                                    ),
+                                    (
+                                        t["rating_str"] == "CCC",
+                                        ibis.literal(6, type="decimal(38, 12)"),
+                                    ),
+                                    (
+                                        t["rating_str"] == "below_b_minus",
+                                        ibis.literal(6, type="decimal(38, 12)"),
                                     ),
                                     else_=ibis.literal(7, type="decimal(38, 12)"),
                                 )
@@ -1353,7 +1497,34 @@ def evaluate_aps210_upstream(
         ibis.literal(0, type="decimal(38, 12)"),
     )
     clf_recognised_amount = ibis.ifelse(
-        clf_eligible,
+        (
+            clf_approved_by_apra
+            & (
+                (
+                    (~(clf_collateral_became_ineligible_30d))
+                    | (
+                        clf_collateral_days_since_ineligible
+                        <= ibis.literal(30, type="decimal(38, 12)")
+                    )
+                )
+                & (
+                    clf_collateral_diversified
+                    & (
+                        clf_annual_reapproval_current
+                        & (
+                            clf_included_in_funding_strategy
+                            & (
+                                clf_balance_sheet_efforts_exhausted
+                                & (
+                                    (~(clf_drawn_non_intraday))
+                                    | clf_drawdown_attested_notified
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        ),
         ibis.least(
             ibis.greatest(clf_contractual, ibis.literal(0, type="decimal(38, 12)")),
             ibis.least(

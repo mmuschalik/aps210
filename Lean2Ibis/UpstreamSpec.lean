@@ -50,26 +50,28 @@ def nonMnaGrossRel : RelExpr :=
 
 def depositsWindowedRel : RelExpr :=
   .window
-    [ ("cust_total_balance", .sum, .col "balance", { partitionBy := ["customer_group_id"] })
+    [ ("cust_total_balance", .sum, .unOp .nonNeg (.col "balance"), { partitionBy := ["customer_group_id"] })
     , ("pool_tainted", .anyBool, .col "has_early_withdrawal_no_penalty", { partitionBy := ["product_category"] })
     ]
     (.table "deposit_accounts")
 
 def depositsClassifiedRel : RelExpr :=
+  let bal := .unOp .nonNeg (.col "balance")
   let isSmeEligible :=
     .binOp .and
       (.binOp .eq (.col "customer_type") (.litStr "sme"))
-      (.binOp .lt (.col "cust_total_balance") (.litRat 2000000 1))
+      (.binOp .and (.col "managed_as_retail")
+        (.binOp .lt (.col "cust_total_balance") (.litRat 2000000 1)))
   let isRetailOrSme :=
     .binOp .or (.binOp .eq (.col "customer_type") (.litStr "retail")) isSmeEligible
   let fcsShare :=
     .binOp .div
-      (.binOp .mul (.col "balance") (.binOp .min (.col "cust_total_balance") (.litRat 250000 1)))
+      (.binOp .mul bal (.binOp .min (.col "cust_total_balance") (.litRat 250000 1)))
       (.col "cust_total_balance")
   .withColumns
     [ ("is_sme_eligible", isSmeEligible)
     , ("fcs_insured_amt",
-        .ite isRetailOrSme (.binOp .min (.col "balance") fcsShare) (.litRat 0 1))
+        .ite isRetailOrSme (.binOp .min bal fcsShare) (.litRat 0 1))
     , ("is_excluded_term_deposit",
         .binOp .and (.binOp .gt (.col "residual_days") (.litRat 30 1)) (.unOp .not (.col "pool_tainted")))
     ]
@@ -131,6 +133,14 @@ def ecaiGradeRankExpr : SExpr :=
     , ("BBB", .litRat 3 1)
     , ("BBB-", .litRat 3 1)
     , ("below_bbb_minus", .litRat 4 1)
+    , ("BB+", .litRat 4 1)
+    , ("BB", .litRat 4 1)
+    , ("BB-", .litRat 4 1)
+    , ("B+", .litRat 5 1)
+    , ("B", .litRat 5 1)
+    , ("B-", .litRat 5 1)
+    , ("CCC", .litRat 6 1)
+    , ("below_b_minus", .litRat 6 1)
     ]
     (.litRat 7 1)
 
@@ -181,7 +191,20 @@ def clfRecognisedExpr : SExpr :=
         (.binOp .sub (.var "clf_contractual") (.unOp .nonNeg (.var "clf_pledged_zero_runoff")))
         (.unOp .nonNeg (.var "clf_received_zero_inflow")))
   let boundC := .unOp .nonNeg (.var "clf_collateral_after_margin")
-  .ite (.var "clf_eligible")
+  let graceOk := .binOp .or
+    (.unOp .not (.var "clf_collateral_became_ineligible_30d"))
+    (.binOp .le (.var "clf_collateral_days_since_ineligible") (.litRat 30 1))
+  let drawdownOk := .binOp .or
+    (.unOp .not (.var "clf_drawn_non_intraday"))
+    (.var "clf_drawdown_attested_notified")
+  let clfEligible :=
+    .binOp .and (.var "clf_approved_by_apra")
+      (.binOp .and graceOk
+        (.binOp .and (.var "clf_collateral_diversified")
+          (.binOp .and (.var "clf_annual_reapproval_current")
+            (.binOp .and (.var "clf_included_in_funding_strategy")
+              (.binOp .and (.var "clf_balance_sheet_efforts_exhausted") drawdownOk)))))
+  .ite clfEligible
     (.binOp .min boundA (.binOp .min boundB boundC))
     (.litRat 0 1)
 
@@ -190,7 +213,7 @@ def upstreamProgram : Program :=
   , tableParams :=
       [ ("positions", ["id", "amount", "maturity_date", "earliest_call_date", "has_call_option", "latest_extension_date", "has_extension_option", "notice_days", "encumbrance_end_date", "is_encumbered"])
       , ("derivative_trades", ["trade_id", "mna_id", "has_eligible_mna", "mtm_payable", "mtm_receivable"])
-      , ("deposit_accounts", ["account_id", "customer_group_id", "customer_type", "product_category", "balance", "has_early_withdrawal_no_penalty", "residual_days"])
+      , ("deposit_accounts", ["account_id", "customer_group_id", "customer_type", "managed_as_retail", "product_category", "balance", "has_early_withdrawal_no_penalty", "residual_days"])
       , ("ccy_hqla1_positions", ["currency", "hqla1_foreign_sov_amt", "ccy_net_outflow"])
       , ("daily_collateral_flows", ["valuation_date", "net_collateral_flow"])
       , ("monthly_net_outflows", ["month_end_date", "net_cash_outflow"])
@@ -201,11 +224,19 @@ def upstreamProgram : Program :=
   , scalarParams :=
       [ ("reporting_date", .date)
       , ("is_aud_only", .bool)
-      , ("clf_eligible", .bool)
+      , ("clf_approved_by_apra", .bool)
       , ("clf_contractual", .rat)
       , ("clf_pledged_zero_runoff", .rat)
       , ("clf_received_zero_inflow", .rat)
       , ("clf_collateral_after_margin", .rat)
+      , ("clf_collateral_diversified", .bool)
+      , ("clf_annual_reapproval_current", .bool)
+      , ("clf_included_in_funding_strategy", .bool)
+      , ("clf_balance_sheet_efforts_exhausted", .bool)
+      , ("clf_drawn_non_intraday", .bool)
+      , ("clf_drawdown_attested_notified", .bool)
+      , ("clf_collateral_became_ineligible_30d", .bool)
+      , ("clf_collateral_days_since_ineligible", .rat)
       ]
   , lets :=
       [ ("six_months_days", .scalar (.binOp .dateDiff (.dateAddMonths (.var "reporting_date") 6) (.var "reporting_date")))
@@ -233,7 +264,7 @@ def upstreamProgram : Program :=
       , ("pos_enc_ge_1y_amt",
           .agg .sum
             (.filter
-              (.binOp .and (.col "is_encumbered") (.binOp .ge (.col "encumbrance_days") (.litRat 365 1)))
+              (.binOp .and (.col "is_encumbered") (.binOp .ge (.col "encumbrance_days") (.var "one_year_days")))
               positionsEnrichedRel)
             (.col "amount"))
       , ("mna_net_outflow", .agg .sum mnaNettedRel (.col "net_payable"))
@@ -243,11 +274,11 @@ def upstreamProgram : Program :=
       , ("deriv_net_outflow", .scalar (.binOp .add (.var "mna_net_outflow") (.var "gross_deriv_outflow")))
       , ("deriv_net_inflow", .scalar (.binOp .add (.var "mna_net_inflow") (.var "gross_deriv_inflow")))
       , ("sme_eligible_deposits",
-          .agg .sum (.filter (.col "is_sme_eligible") depositsClassifiedRel) (.col "balance"))
+          .agg .sum (.filter (.col "is_sme_eligible") depositsClassifiedRel) (.unOp .nonNeg (.col "balance")))
       , ("fcs_insured_deposits",
           .agg .sum depositsClassifiedRel (.col "fcs_insured_amt"))
       , ("excluded_term_deposits",
-          .agg .sum (.filter (.col "is_excluded_term_deposit") depositsClassifiedRel) (.col "balance"))
+          .agg .sum (.filter (.col "is_excluded_term_deposit") depositsClassifiedRel) (.unOp .nonNeg (.col "balance")))
       , ("capped_foreign_sov_hqla1",
           .agg .sum foreignSovCappedByCcyRel (.col "capped_hqla1"))
       , ("max_30d_collateral_outflow",
@@ -352,6 +383,7 @@ def upstreamInputToTableEnv (input : UpstreamInput) : TableEnv :=
       [ ("account_id", .str a.accountId)
       , ("customer_group_id", .str a.customerGroupId)
       , ("customer_type", .str (customerTypeToStr a.customerType))
+      , ("managed_as_retail", .bool a.managedAsRetail)
       , ("product_category", .str a.productCategory)
       , ("balance", .rat a.balance)
       , ("has_early_withdrawal_no_penalty", .bool a.hasEarlyWithdrawalNoPenalty)
@@ -394,11 +426,19 @@ def upstreamInputToTableEnv (input : UpstreamInput) : TableEnv :=
 def upstreamInputToScalars (input : UpstreamInput) : Row :=
   [ ("reporting_date", .date input.reportingDate)
   , ("is_aud_only", .bool input.isAudOnly)
-  , ("clf_eligible", .bool input.clf.eligible)
+  , ("clf_approved_by_apra", .bool input.clf.approvedByApra)
   , ("clf_contractual", .rat input.clf.contractualAmount)
   , ("clf_pledged_zero_runoff", .rat input.clf.pledgedZeroRunoff)
   , ("clf_received_zero_inflow", .rat input.clf.receivedZeroInflow)
   , ("clf_collateral_after_margin", .rat input.clf.collateralAfterMargin)
+  , ("clf_collateral_diversified", .bool input.clf.collateralDiversified)
+  , ("clf_annual_reapproval_current", .bool input.clf.annualReapprovalCurrent)
+  , ("clf_included_in_funding_strategy", .bool input.clf.includedInFundingStrategy)
+  , ("clf_balance_sheet_efforts_exhausted", .bool input.clf.balanceSheetEffortsExhausted)
+  , ("clf_drawn_non_intraday", .bool input.clf.clfDrawnNonIntraday)
+  , ("clf_drawdown_attested_notified", .bool input.clf.drawdownAttestedAndNotifiedToApra)
+  , ("clf_collateral_became_ineligible_30d", .bool input.clf.collateralBecameIneligibleWithin30Days)
+  , ("clf_collateral_days_since_ineligible", .rat (input.clf.collateralDaysSinceIneligible : Rat))
   ]
 
 def upstreamResultToRow (r : UpstreamResult) : Row :=
@@ -486,11 +526,15 @@ def smokeInput : UpstreamInput :=
       , { legId := "s3", meetsOperationalReqs := false, nettingEligible := true, hqla1Delta := 100, hqla2aDelta := 0, hqla2bDelta := 0 }
       ]
   , clf :=
-      { eligible := true
+      { approvedByApra := true
       , contractualAmount := 500
       , pledgedZeroRunoff := 80
       , receivedZeroInflow := 20
       , collateralAfterMargin := 460
+      , collateralDiversified := true
+      , annualReapprovalCurrent := true
+      , includedInFundingStrategy := true
+      , balanceSheetEffortsExhausted := true
       }
   }
 

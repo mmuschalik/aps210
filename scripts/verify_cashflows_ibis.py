@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -33,8 +34,20 @@ def make_tables(
             "counted_in_hqla": "boolean",
             "is_performing": "boolean",
             "source": "string",
+            "counterparty": "string",
+            "has_valid_mna": "boolean",
+            "is_same_day_fx_principal_exchange": "boolean",
         }
     )
+    cf_rows = [
+        {
+            "counterparty": "",
+            "has_valid_mna": False,
+            "is_same_day_fx_principal_exchange": False,
+            **r,
+        }
+        for r in cf_rows
+    ]
     deriv_schema = ibis.schema(
         {
             "counterparty": "string",
@@ -206,7 +219,14 @@ def main() -> None:
         base_cf, deriv_rows, liab_rows, loan_rows
     )
     exprs = evaluate_aps210_cashflows(
-        cf_tbl, d_tbl, liab_tbl, loan_tbl, Decimal(70), False, "AUD"
+        cf_tbl,
+        d_tbl,
+        liab_tbl,
+        loan_tbl,
+        datetime.date(2026, 6, 30),
+        Decimal(70),
+        False,
+        "AUD",
     )
     actual = {k: con.execute(v) for k, v in exprs.items()}
     expected = {
@@ -236,7 +256,14 @@ def main() -> None:
         base_cf, deriv_rows, liab_rows, loan_rows
     )
     exprs_fail = evaluate_aps210_cashflows(
-        cf_tbl_fail, d_tbl_fail, liab_tbl_fail, loan_tbl_fail, Decimal(60), False, "AUD"
+        cf_tbl_fail,
+        d_tbl_fail,
+        liab_tbl_fail,
+        loan_tbl_fail,
+        datetime.date(2026, 6, 30),
+        Decimal(60),
+        False,
+        "AUD",
     )
     actual_fail = {k: con.execute(v) for k, v in exprs_fail.items()}
     assert Decimal(actual_fail["min_cum_net_cf"]) == Decimal(-70)
@@ -248,7 +275,14 @@ def main() -> None:
         cf_rows, deriv_rows, liab_rows, loan_rows
     )
     exprs2 = evaluate_aps210_cashflows(
-        cf_tbl2, d_tbl2, liab_tbl2, loan_tbl2, Decimal(60), False, "AUD"
+        cf_tbl2,
+        d_tbl2,
+        liab_tbl2,
+        loan_tbl2,
+        datetime.date(2026, 6, 30),
+        Decimal(60),
+        False,
+        "AUD",
     )
     actual2 = {k: con.execute(v) for k, v in exprs2.items()}
     assert Decimal(actual2["sched_inflow_30d"]) == Decimal(40)

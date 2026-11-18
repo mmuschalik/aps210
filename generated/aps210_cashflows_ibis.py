@@ -11,15 +11,29 @@ def evaluate_aps210_cashflows(
     lcr_derivative_legs,
     nsfr_liability_legs,
     nsfr_loan_legs,
+    reporting_date,
     initial_liquid_buffer,
     use_currency_filter,
     target_currency,
 ):
+    reporting_date = ibis.literal(str(reporting_date), type="date")
     initial_liquid_buffer = ibis.literal(
         Decimal(str(initial_liquid_buffer)), type="decimal(38, 12)"
     )
     use_currency_filter = ibis.literal(bool(use_currency_filter))
     target_currency = ibis.literal(str(target_currency))
+    six_months_days = (
+        (reporting_date + ibis.interval(months=6))
+        .cast("date")
+        .delta(reporting_date, unit="day")
+        .cast("decimal(38, 12)")
+    )
+    one_year_days = (
+        (reporting_date + ibis.interval(months=12))
+        .cast("date")
+        .delta(reporting_date, unit="day")
+        .cast("decimal(38, 12)")
+    )
     min_cum_net_cf = ibis.coalesce(
         (
             (
@@ -916,6 +930,1008 @@ def evaluate_aps210_cashflows(
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),
     )
+    cf_deriv_nettable_out = ibis.coalesce(
+        (
+            (
+                (
+                    (
+                        (
+                            (
+                                (
+                                    (
+                                        (
+                                            (
+                                                (
+                                                    (
+                                                        (cash_flows).mutate(
+                                                            eff_out_days=lambda t: (
+                                                                ibis.ifelse(
+                                                                    t[
+                                                                        "has_earliest_call"
+                                                                    ],
+                                                                    ibis.least(
+                                                                        t[
+                                                                            "contractual_days"
+                                                                        ],
+                                                                        t[
+                                                                            "earliest_call_days"
+                                                                        ],
+                                                                    ),
+                                                                    t[
+                                                                        "contractual_days"
+                                                                    ],
+                                                                )
+                                                            )
+                                                        )
+                                                    ).mutate(
+                                                        eff_in_days=lambda t: (
+                                                            ibis.ifelse(
+                                                                t[
+                                                                    "has_latest_extension"
+                                                                ],
+                                                                ibis.greatest(
+                                                                    t[
+                                                                        "contractual_days"
+                                                                    ],
+                                                                    t[
+                                                                        "latest_extension_days"
+                                                                    ],
+                                                                ),
+                                                                t["contractual_days"],
+                                                            )
+                                                        )
+                                                    )
+                                                ).mutate(
+                                                    eff_days=lambda t: ibis.ifelse(
+                                                        (
+                                                            t["direction"]
+                                                            == ibis.literal("outflow")
+                                                        ),
+                                                        ibis.ifelse(
+                                                            t["has_earliest_call"],
+                                                            ibis.least(
+                                                                t["contractual_days"],
+                                                                t["earliest_call_days"],
+                                                            ),
+                                                            t["contractual_days"],
+                                                        ),
+                                                        ibis.ifelse(
+                                                            t["has_latest_extension"],
+                                                            ibis.greatest(
+                                                                t["contractual_days"],
+                                                                t[
+                                                                    "latest_extension_days"
+                                                                ],
+                                                            ),
+                                                            t["contractual_days"],
+                                                        ),
+                                                    )
+                                                )
+                                            ).mutate(
+                                                horizon_rank=lambda t: ibis.ifelse(
+                                                    (
+                                                        t["eff_days"]
+                                                        == ibis.literal(
+                                                            0, type="decimal(38, 12)"
+                                                        )
+                                                    ),
+                                                    ibis.literal(
+                                                        0, type="decimal(38, 12)"
+                                                    ),
+                                                    ibis.ifelse(
+                                                        (
+                                                            t["eff_days"]
+                                                            <= ibis.literal(
+                                                                7,
+                                                                type="decimal(38, 12)",
+                                                            )
+                                                        ),
+                                                        ibis.literal(
+                                                            1, type="decimal(38, 12)"
+                                                        ),
+                                                        ibis.ifelse(
+                                                            (
+                                                                t["eff_days"]
+                                                                <= ibis.literal(
+                                                                    30,
+                                                                    type="decimal(38, 12)",
+                                                                )
+                                                            ),
+                                                            ibis.literal(
+                                                                2,
+                                                                type="decimal(38, 12)",
+                                                            ),
+                                                            ibis.ifelse(
+                                                                (
+                                                                    t["eff_days"]
+                                                                    < ibis.literal(
+                                                                        180,
+                                                                        type="decimal(38, 12)",
+                                                                    )
+                                                                ),
+                                                                ibis.literal(
+                                                                    3,
+                                                                    type="decimal(38, 12)",
+                                                                ),
+                                                                ibis.ifelse(
+                                                                    (
+                                                                        t["eff_days"]
+                                                                        < ibis.literal(
+                                                                            365,
+                                                                            type="decimal(38, 12)",
+                                                                        )
+                                                                    ),
+                                                                    ibis.literal(
+                                                                        4,
+                                                                        type="decimal(38, 12)",
+                                                                    ),
+                                                                    ibis.literal(
+                                                                        5,
+                                                                        type="decimal(38, 12)",
+                                                                    ),
+                                                                ),
+                                                            ),
+                                                        ),
+                                                    ),
+                                                )
+                                            )
+                                        ).mutate(
+                                            is_elig_lcr_inflow=lambda t: (
+                                                (
+                                                    t["direction"]
+                                                    == ibis.literal("inflow")
+                                                )
+                                                & (
+                                                    (
+                                                        ibis.ifelse(
+                                                            t["has_latest_extension"],
+                                                            ibis.greatest(
+                                                                t["contractual_days"],
+                                                                t[
+                                                                    "latest_extension_days"
+                                                                ],
+                                                            ),
+                                                            t["contractual_days"],
+                                                        )
+                                                        <= ibis.literal(
+                                                            30, type="decimal(38, 12)"
+                                                        )
+                                                    )
+                                                    & (
+                                                        (
+                                                            (~(t["is_open_maturity"]))
+                                                            | t[
+                                                                "is_minimum_contractual_payment"
+                                                            ]
+                                                        )
+                                                        & (
+                                                            (
+                                                                ~(
+                                                                    t[
+                                                                        "is_non_financial_revenue"
+                                                                    ]
+                                                                )
+                                                            )
+                                                            & (
+                                                                (
+                                                                    ~(
+                                                                        t[
+                                                                            "counted_in_hqla"
+                                                                        ]
+                                                                    )
+                                                                )
+                                                                & t["is_performing"]
+                                                            )
+                                                        )
+                                                    )
+                                                )
+                                            )
+                                        )
+                                    ).mutate(
+                                        is_lcr_outflow_30d=lambda t: (
+                                            (t["direction"] == ibis.literal("outflow"))
+                                            & (
+                                                ibis.ifelse(
+                                                    t["has_earliest_call"],
+                                                    ibis.least(
+                                                        t["contractual_days"],
+                                                        t["earliest_call_days"],
+                                                    ),
+                                                    t["contractual_days"],
+                                                )
+                                                <= ibis.literal(
+                                                    30, type="decimal(38, 12)"
+                                                )
+                                            )
+                                        )
+                                    )
+                                ).mutate(
+                                    is_ladder_valid=lambda t: (
+                                        (t["direction"] == ibis.literal("outflow"))
+                                        | (
+                                            t["is_performing"]
+                                            & (
+                                                (~(t["is_non_financial_revenue"]))
+                                                & (
+                                                    (~(t["is_open_maturity"]))
+                                                    | t[
+                                                        "is_minimum_contractual_payment"
+                                                    ]
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            ).mutate(
+                                nonneg_amt=lambda t: ibis.greatest(
+                                    t["amount"], ibis.literal(0, type="decimal(38, 12)")
+                                )
+                            )
+                        ).mutate(
+                            signed_amt=lambda t: ibis.ifelse(
+                                (t["direction"] == ibis.literal("inflow")),
+                                t["nonneg_amt"],
+                                (
+                                    ibis.literal(0, type="decimal(38, 12)")
+                                    - t["nonneg_amt"]
+                                ),
+                            )
+                        )
+                    ).filter(
+                        lambda t: (
+                            (t["source"] == ibis.literal("derivative"))
+                            & (
+                                t["has_valid_mna"]
+                                & (~(t["is_same_day_fx_principal_exchange"]))
+                            )
+                        )
+                    )
+                )
+                .group_by(["counterparty", "currency"])
+                .aggregate(
+                    tot_pay=lambda t: ibis.coalesce(
+                        (
+                            ibis.ifelse(
+                                t["is_lcr_outflow_30d"],
+                                t["nonneg_amt"],
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            )
+                        ).sum(),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    ),
+                    tot_rec=lambda t: ibis.coalesce(
+                        (
+                            ibis.ifelse(
+                                t["is_elig_lcr_inflow"],
+                                t["nonneg_amt"],
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            )
+                        ).sum(),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    ),
+                )
+            ).mutate(
+                net_out=lambda t: ibis.greatest(
+                    (t["tot_pay"] - t["tot_rec"]),
+                    ibis.literal(0, type="decimal(38, 12)"),
+                )
+            )
+        )
+        .aggregate(val=lambda t: (t["net_out"]).sum())["val"]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
+    cf_deriv_nettable_in = ibis.coalesce(
+        (
+            (
+                (
+                    (
+                        (
+                            (
+                                (
+                                    (
+                                        (
+                                            (
+                                                (
+                                                    (
+                                                        (cash_flows).mutate(
+                                                            eff_out_days=lambda t: (
+                                                                ibis.ifelse(
+                                                                    t[
+                                                                        "has_earliest_call"
+                                                                    ],
+                                                                    ibis.least(
+                                                                        t[
+                                                                            "contractual_days"
+                                                                        ],
+                                                                        t[
+                                                                            "earliest_call_days"
+                                                                        ],
+                                                                    ),
+                                                                    t[
+                                                                        "contractual_days"
+                                                                    ],
+                                                                )
+                                                            )
+                                                        )
+                                                    ).mutate(
+                                                        eff_in_days=lambda t: (
+                                                            ibis.ifelse(
+                                                                t[
+                                                                    "has_latest_extension"
+                                                                ],
+                                                                ibis.greatest(
+                                                                    t[
+                                                                        "contractual_days"
+                                                                    ],
+                                                                    t[
+                                                                        "latest_extension_days"
+                                                                    ],
+                                                                ),
+                                                                t["contractual_days"],
+                                                            )
+                                                        )
+                                                    )
+                                                ).mutate(
+                                                    eff_days=lambda t: ibis.ifelse(
+                                                        (
+                                                            t["direction"]
+                                                            == ibis.literal("outflow")
+                                                        ),
+                                                        ibis.ifelse(
+                                                            t["has_earliest_call"],
+                                                            ibis.least(
+                                                                t["contractual_days"],
+                                                                t["earliest_call_days"],
+                                                            ),
+                                                            t["contractual_days"],
+                                                        ),
+                                                        ibis.ifelse(
+                                                            t["has_latest_extension"],
+                                                            ibis.greatest(
+                                                                t["contractual_days"],
+                                                                t[
+                                                                    "latest_extension_days"
+                                                                ],
+                                                            ),
+                                                            t["contractual_days"],
+                                                        ),
+                                                    )
+                                                )
+                                            ).mutate(
+                                                horizon_rank=lambda t: ibis.ifelse(
+                                                    (
+                                                        t["eff_days"]
+                                                        == ibis.literal(
+                                                            0, type="decimal(38, 12)"
+                                                        )
+                                                    ),
+                                                    ibis.literal(
+                                                        0, type="decimal(38, 12)"
+                                                    ),
+                                                    ibis.ifelse(
+                                                        (
+                                                            t["eff_days"]
+                                                            <= ibis.literal(
+                                                                7,
+                                                                type="decimal(38, 12)",
+                                                            )
+                                                        ),
+                                                        ibis.literal(
+                                                            1, type="decimal(38, 12)"
+                                                        ),
+                                                        ibis.ifelse(
+                                                            (
+                                                                t["eff_days"]
+                                                                <= ibis.literal(
+                                                                    30,
+                                                                    type="decimal(38, 12)",
+                                                                )
+                                                            ),
+                                                            ibis.literal(
+                                                                2,
+                                                                type="decimal(38, 12)",
+                                                            ),
+                                                            ibis.ifelse(
+                                                                (
+                                                                    t["eff_days"]
+                                                                    < ibis.literal(
+                                                                        180,
+                                                                        type="decimal(38, 12)",
+                                                                    )
+                                                                ),
+                                                                ibis.literal(
+                                                                    3,
+                                                                    type="decimal(38, 12)",
+                                                                ),
+                                                                ibis.ifelse(
+                                                                    (
+                                                                        t["eff_days"]
+                                                                        < ibis.literal(
+                                                                            365,
+                                                                            type="decimal(38, 12)",
+                                                                        )
+                                                                    ),
+                                                                    ibis.literal(
+                                                                        4,
+                                                                        type="decimal(38, 12)",
+                                                                    ),
+                                                                    ibis.literal(
+                                                                        5,
+                                                                        type="decimal(38, 12)",
+                                                                    ),
+                                                                ),
+                                                            ),
+                                                        ),
+                                                    ),
+                                                )
+                                            )
+                                        ).mutate(
+                                            is_elig_lcr_inflow=lambda t: (
+                                                (
+                                                    t["direction"]
+                                                    == ibis.literal("inflow")
+                                                )
+                                                & (
+                                                    (
+                                                        ibis.ifelse(
+                                                            t["has_latest_extension"],
+                                                            ibis.greatest(
+                                                                t["contractual_days"],
+                                                                t[
+                                                                    "latest_extension_days"
+                                                                ],
+                                                            ),
+                                                            t["contractual_days"],
+                                                        )
+                                                        <= ibis.literal(
+                                                            30, type="decimal(38, 12)"
+                                                        )
+                                                    )
+                                                    & (
+                                                        (
+                                                            (~(t["is_open_maturity"]))
+                                                            | t[
+                                                                "is_minimum_contractual_payment"
+                                                            ]
+                                                        )
+                                                        & (
+                                                            (
+                                                                ~(
+                                                                    t[
+                                                                        "is_non_financial_revenue"
+                                                                    ]
+                                                                )
+                                                            )
+                                                            & (
+                                                                (
+                                                                    ~(
+                                                                        t[
+                                                                            "counted_in_hqla"
+                                                                        ]
+                                                                    )
+                                                                )
+                                                                & t["is_performing"]
+                                                            )
+                                                        )
+                                                    )
+                                                )
+                                            )
+                                        )
+                                    ).mutate(
+                                        is_lcr_outflow_30d=lambda t: (
+                                            (t["direction"] == ibis.literal("outflow"))
+                                            & (
+                                                ibis.ifelse(
+                                                    t["has_earliest_call"],
+                                                    ibis.least(
+                                                        t["contractual_days"],
+                                                        t["earliest_call_days"],
+                                                    ),
+                                                    t["contractual_days"],
+                                                )
+                                                <= ibis.literal(
+                                                    30, type="decimal(38, 12)"
+                                                )
+                                            )
+                                        )
+                                    )
+                                ).mutate(
+                                    is_ladder_valid=lambda t: (
+                                        (t["direction"] == ibis.literal("outflow"))
+                                        | (
+                                            t["is_performing"]
+                                            & (
+                                                (~(t["is_non_financial_revenue"]))
+                                                & (
+                                                    (~(t["is_open_maturity"]))
+                                                    | t[
+                                                        "is_minimum_contractual_payment"
+                                                    ]
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            ).mutate(
+                                nonneg_amt=lambda t: ibis.greatest(
+                                    t["amount"], ibis.literal(0, type="decimal(38, 12)")
+                                )
+                            )
+                        ).mutate(
+                            signed_amt=lambda t: ibis.ifelse(
+                                (t["direction"] == ibis.literal("inflow")),
+                                t["nonneg_amt"],
+                                (
+                                    ibis.literal(0, type="decimal(38, 12)")
+                                    - t["nonneg_amt"]
+                                ),
+                            )
+                        )
+                    ).filter(
+                        lambda t: (
+                            (t["source"] == ibis.literal("derivative"))
+                            & (
+                                t["has_valid_mna"]
+                                & (~(t["is_same_day_fx_principal_exchange"]))
+                            )
+                        )
+                    )
+                )
+                .group_by(["counterparty", "currency"])
+                .aggregate(
+                    tot_pay=lambda t: ibis.coalesce(
+                        (
+                            ibis.ifelse(
+                                t["is_lcr_outflow_30d"],
+                                t["nonneg_amt"],
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            )
+                        ).sum(),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    ),
+                    tot_rec=lambda t: ibis.coalesce(
+                        (
+                            ibis.ifelse(
+                                t["is_elig_lcr_inflow"],
+                                t["nonneg_amt"],
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            )
+                        ).sum(),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    ),
+                )
+            ).mutate(
+                net_in=lambda t: ibis.greatest(
+                    (t["tot_rec"] - t["tot_pay"]),
+                    ibis.literal(0, type="decimal(38, 12)"),
+                )
+            )
+        )
+        .aggregate(val=lambda t: (t["net_in"]).sum())["val"]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
+    cf_deriv_outflow_30d = ibis.coalesce(
+        (
+            (
+                (
+                    (
+                        (
+                            (
+                                (
+                                    (
+                                        (
+                                            (
+                                                (cash_flows).mutate(
+                                                    eff_out_days=lambda t: ibis.ifelse(
+                                                        t["has_earliest_call"],
+                                                        ibis.least(
+                                                            t["contractual_days"],
+                                                            t["earliest_call_days"],
+                                                        ),
+                                                        t["contractual_days"],
+                                                    )
+                                                )
+                                            ).mutate(
+                                                eff_in_days=lambda t: ibis.ifelse(
+                                                    t["has_latest_extension"],
+                                                    ibis.greatest(
+                                                        t["contractual_days"],
+                                                        t["latest_extension_days"],
+                                                    ),
+                                                    t["contractual_days"],
+                                                )
+                                            )
+                                        ).mutate(
+                                            eff_days=lambda t: ibis.ifelse(
+                                                (
+                                                    t["direction"]
+                                                    == ibis.literal("outflow")
+                                                ),
+                                                ibis.ifelse(
+                                                    t["has_earliest_call"],
+                                                    ibis.least(
+                                                        t["contractual_days"],
+                                                        t["earliest_call_days"],
+                                                    ),
+                                                    t["contractual_days"],
+                                                ),
+                                                ibis.ifelse(
+                                                    t["has_latest_extension"],
+                                                    ibis.greatest(
+                                                        t["contractual_days"],
+                                                        t["latest_extension_days"],
+                                                    ),
+                                                    t["contractual_days"],
+                                                ),
+                                            )
+                                        )
+                                    ).mutate(
+                                        horizon_rank=lambda t: ibis.ifelse(
+                                            (
+                                                t["eff_days"]
+                                                == ibis.literal(
+                                                    0, type="decimal(38, 12)"
+                                                )
+                                            ),
+                                            ibis.literal(0, type="decimal(38, 12)"),
+                                            ibis.ifelse(
+                                                (
+                                                    t["eff_days"]
+                                                    <= ibis.literal(
+                                                        7, type="decimal(38, 12)"
+                                                    )
+                                                ),
+                                                ibis.literal(1, type="decimal(38, 12)"),
+                                                ibis.ifelse(
+                                                    (
+                                                        t["eff_days"]
+                                                        <= ibis.literal(
+                                                            30, type="decimal(38, 12)"
+                                                        )
+                                                    ),
+                                                    ibis.literal(
+                                                        2, type="decimal(38, 12)"
+                                                    ),
+                                                    ibis.ifelse(
+                                                        (
+                                                            t["eff_days"]
+                                                            < ibis.literal(
+                                                                180,
+                                                                type="decimal(38, 12)",
+                                                            )
+                                                        ),
+                                                        ibis.literal(
+                                                            3, type="decimal(38, 12)"
+                                                        ),
+                                                        ibis.ifelse(
+                                                            (
+                                                                t["eff_days"]
+                                                                < ibis.literal(
+                                                                    365,
+                                                                    type="decimal(38, 12)",
+                                                                )
+                                                            ),
+                                                            ibis.literal(
+                                                                4,
+                                                                type="decimal(38, 12)",
+                                                            ),
+                                                            ibis.literal(
+                                                                5,
+                                                                type="decimal(38, 12)",
+                                                            ),
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        )
+                                    )
+                                ).mutate(
+                                    is_elig_lcr_inflow=lambda t: (
+                                        (t["direction"] == ibis.literal("inflow"))
+                                        & (
+                                            (
+                                                ibis.ifelse(
+                                                    t["has_latest_extension"],
+                                                    ibis.greatest(
+                                                        t["contractual_days"],
+                                                        t["latest_extension_days"],
+                                                    ),
+                                                    t["contractual_days"],
+                                                )
+                                                <= ibis.literal(
+                                                    30, type="decimal(38, 12)"
+                                                )
+                                            )
+                                            & (
+                                                (
+                                                    (~(t["is_open_maturity"]))
+                                                    | t[
+                                                        "is_minimum_contractual_payment"
+                                                    ]
+                                                )
+                                                & (
+                                                    (~(t["is_non_financial_revenue"]))
+                                                    & (
+                                                        (~(t["counted_in_hqla"]))
+                                                        & t["is_performing"]
+                                                    )
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            ).mutate(
+                                is_lcr_outflow_30d=lambda t: (
+                                    (t["direction"] == ibis.literal("outflow"))
+                                    & (
+                                        ibis.ifelse(
+                                            t["has_earliest_call"],
+                                            ibis.least(
+                                                t["contractual_days"],
+                                                t["earliest_call_days"],
+                                            ),
+                                            t["contractual_days"],
+                                        )
+                                        <= ibis.literal(30, type="decimal(38, 12)")
+                                    )
+                                )
+                            )
+                        ).mutate(
+                            is_ladder_valid=lambda t: (
+                                (t["direction"] == ibis.literal("outflow"))
+                                | (
+                                    t["is_performing"]
+                                    & (
+                                        (~(t["is_non_financial_revenue"]))
+                                        & (
+                                            (~(t["is_open_maturity"]))
+                                            | t["is_minimum_contractual_payment"]
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    ).mutate(
+                        nonneg_amt=lambda t: ibis.greatest(
+                            t["amount"], ibis.literal(0, type="decimal(38, 12)")
+                        )
+                    )
+                ).mutate(
+                    signed_amt=lambda t: ibis.ifelse(
+                        (t["direction"] == ibis.literal("inflow")),
+                        t["nonneg_amt"],
+                        (ibis.literal(0, type="decimal(38, 12)") - t["nonneg_amt"]),
+                    )
+                )
+            ).filter(
+                lambda t: (
+                    t["is_lcr_outflow_30d"]
+                    & (
+                        (t["source"] == ibis.literal("derivative"))
+                        & (
+                            (~(t["has_valid_mna"]))
+                            | t["is_same_day_fx_principal_exchange"]
+                        )
+                    )
+                )
+            )
+        )
+        .aggregate(val=lambda t: (t["nonneg_amt"]).sum())["val"]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
+    cf_deriv_inflow_30d = ibis.coalesce(
+        (
+            (
+                (
+                    (
+                        (
+                            (
+                                (
+                                    (
+                                        (
+                                            (
+                                                (cash_flows).mutate(
+                                                    eff_out_days=lambda t: ibis.ifelse(
+                                                        t["has_earliest_call"],
+                                                        ibis.least(
+                                                            t["contractual_days"],
+                                                            t["earliest_call_days"],
+                                                        ),
+                                                        t["contractual_days"],
+                                                    )
+                                                )
+                                            ).mutate(
+                                                eff_in_days=lambda t: ibis.ifelse(
+                                                    t["has_latest_extension"],
+                                                    ibis.greatest(
+                                                        t["contractual_days"],
+                                                        t["latest_extension_days"],
+                                                    ),
+                                                    t["contractual_days"],
+                                                )
+                                            )
+                                        ).mutate(
+                                            eff_days=lambda t: ibis.ifelse(
+                                                (
+                                                    t["direction"]
+                                                    == ibis.literal("outflow")
+                                                ),
+                                                ibis.ifelse(
+                                                    t["has_earliest_call"],
+                                                    ibis.least(
+                                                        t["contractual_days"],
+                                                        t["earliest_call_days"],
+                                                    ),
+                                                    t["contractual_days"],
+                                                ),
+                                                ibis.ifelse(
+                                                    t["has_latest_extension"],
+                                                    ibis.greatest(
+                                                        t["contractual_days"],
+                                                        t["latest_extension_days"],
+                                                    ),
+                                                    t["contractual_days"],
+                                                ),
+                                            )
+                                        )
+                                    ).mutate(
+                                        horizon_rank=lambda t: ibis.ifelse(
+                                            (
+                                                t["eff_days"]
+                                                == ibis.literal(
+                                                    0, type="decimal(38, 12)"
+                                                )
+                                            ),
+                                            ibis.literal(0, type="decimal(38, 12)"),
+                                            ibis.ifelse(
+                                                (
+                                                    t["eff_days"]
+                                                    <= ibis.literal(
+                                                        7, type="decimal(38, 12)"
+                                                    )
+                                                ),
+                                                ibis.literal(1, type="decimal(38, 12)"),
+                                                ibis.ifelse(
+                                                    (
+                                                        t["eff_days"]
+                                                        <= ibis.literal(
+                                                            30, type="decimal(38, 12)"
+                                                        )
+                                                    ),
+                                                    ibis.literal(
+                                                        2, type="decimal(38, 12)"
+                                                    ),
+                                                    ibis.ifelse(
+                                                        (
+                                                            t["eff_days"]
+                                                            < ibis.literal(
+                                                                180,
+                                                                type="decimal(38, 12)",
+                                                            )
+                                                        ),
+                                                        ibis.literal(
+                                                            3, type="decimal(38, 12)"
+                                                        ),
+                                                        ibis.ifelse(
+                                                            (
+                                                                t["eff_days"]
+                                                                < ibis.literal(
+                                                                    365,
+                                                                    type="decimal(38, 12)",
+                                                                )
+                                                            ),
+                                                            ibis.literal(
+                                                                4,
+                                                                type="decimal(38, 12)",
+                                                            ),
+                                                            ibis.literal(
+                                                                5,
+                                                                type="decimal(38, 12)",
+                                                            ),
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        )
+                                    )
+                                ).mutate(
+                                    is_elig_lcr_inflow=lambda t: (
+                                        (t["direction"] == ibis.literal("inflow"))
+                                        & (
+                                            (
+                                                ibis.ifelse(
+                                                    t["has_latest_extension"],
+                                                    ibis.greatest(
+                                                        t["contractual_days"],
+                                                        t["latest_extension_days"],
+                                                    ),
+                                                    t["contractual_days"],
+                                                )
+                                                <= ibis.literal(
+                                                    30, type="decimal(38, 12)"
+                                                )
+                                            )
+                                            & (
+                                                (
+                                                    (~(t["is_open_maturity"]))
+                                                    | t[
+                                                        "is_minimum_contractual_payment"
+                                                    ]
+                                                )
+                                                & (
+                                                    (~(t["is_non_financial_revenue"]))
+                                                    & (
+                                                        (~(t["counted_in_hqla"]))
+                                                        & t["is_performing"]
+                                                    )
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            ).mutate(
+                                is_lcr_outflow_30d=lambda t: (
+                                    (t["direction"] == ibis.literal("outflow"))
+                                    & (
+                                        ibis.ifelse(
+                                            t["has_earliest_call"],
+                                            ibis.least(
+                                                t["contractual_days"],
+                                                t["earliest_call_days"],
+                                            ),
+                                            t["contractual_days"],
+                                        )
+                                        <= ibis.literal(30, type="decimal(38, 12)")
+                                    )
+                                )
+                            )
+                        ).mutate(
+                            is_ladder_valid=lambda t: (
+                                (t["direction"] == ibis.literal("outflow"))
+                                | (
+                                    t["is_performing"]
+                                    & (
+                                        (~(t["is_non_financial_revenue"]))
+                                        & (
+                                            (~(t["is_open_maturity"]))
+                                            | t["is_minimum_contractual_payment"]
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    ).mutate(
+                        nonneg_amt=lambda t: ibis.greatest(
+                            t["amount"], ibis.literal(0, type="decimal(38, 12)")
+                        )
+                    )
+                ).mutate(
+                    signed_amt=lambda t: ibis.ifelse(
+                        (t["direction"] == ibis.literal("inflow")),
+                        t["nonneg_amt"],
+                        (ibis.literal(0, type="decimal(38, 12)") - t["nonneg_amt"]),
+                    )
+                )
+            ).filter(
+                lambda t: (
+                    t["is_elig_lcr_inflow"]
+                    & (
+                        (t["source"] == ibis.literal("derivative"))
+                        & (
+                            (~(t["has_valid_mna"]))
+                            | t["is_same_day_fx_principal_exchange"]
+                        )
+                    )
+                )
+            )
+        )
+        .aggregate(val=lambda t: (t["nonneg_amt"]).sum())["val"]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
     deriv_net_outflow = ibis.coalesce(
         (
             (
@@ -1144,14 +2160,14 @@ def evaluate_aps210_cashflows(
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),
     )
-    lcr_deriv_outflow = deriv_net_outflow + deriv_gross_outflow
-    lcr_deriv_inflow = deriv_net_inflow + deriv_gross_inflow
+    lcr_deriv_outflow = cf_deriv_nettable_out + (
+        cf_deriv_outflow_30d + (deriv_net_outflow + deriv_gross_outflow)
+    )
+    lcr_deriv_inflow = cf_deriv_nettable_in + (
+        cf_deriv_inflow_30d + (deriv_net_inflow + deriv_gross_inflow)
+    )
     nsfr_asf_lt6m = ibis.coalesce(
-        (
-            (nsfr_liability_legs).filter(
-                lambda t: t["days"] < ibis.literal(180, type="decimal(38, 12)")
-            )
-        )
+        ((nsfr_liability_legs).filter(lambda t: t["days"] < six_months_days))
         .aggregate(
             val=lambda t: (
                 ibis.greatest(t["amount"], ibis.literal(0, type="decimal(38, 12)"))
@@ -1163,10 +2179,7 @@ def evaluate_aps210_cashflows(
     nsfr_asf_6m_to_1y = ibis.coalesce(
         (
             (nsfr_liability_legs).filter(
-                lambda t: (
-                    (t["days"] >= ibis.literal(180, type="decimal(38, 12)"))
-                    & (t["days"] < ibis.literal(365, type="decimal(38, 12)"))
-                )
+                lambda t: (t["days"] >= six_months_days) & (t["days"] < one_year_days)
             )
         )
         .aggregate(
@@ -1178,11 +2191,7 @@ def evaluate_aps210_cashflows(
         ibis.literal(0, type="decimal(38, 12)"),
     )
     nsfr_asf_ge1y = ibis.coalesce(
-        (
-            (nsfr_liability_legs).filter(
-                lambda t: t["days"] >= ibis.literal(365, type="decimal(38, 12)")
-            )
-        )
+        ((nsfr_liability_legs).filter(lambda t: t["days"] >= one_year_days))
         .aggregate(
             val=lambda t: (
                 ibis.greatest(t["amount"], ibis.literal(0, type="decimal(38, 12)"))
@@ -1192,11 +2201,7 @@ def evaluate_aps210_cashflows(
         ibis.literal(0, type="decimal(38, 12)"),
     )
     nsfr_loan_lt1y = ibis.coalesce(
-        (
-            (nsfr_loan_legs).filter(
-                lambda t: t["days"] < ibis.literal(365, type="decimal(38, 12)")
-            )
-        )
+        ((nsfr_loan_legs).filter(lambda t: t["days"] < one_year_days))
         .aggregate(
             val=lambda t: (
                 ibis.greatest(t["amount"], ibis.literal(0, type="decimal(38, 12)"))
@@ -1206,11 +2211,7 @@ def evaluate_aps210_cashflows(
         ibis.literal(0, type="decimal(38, 12)"),
     )
     nsfr_loan_ge1y = ibis.coalesce(
-        (
-            (nsfr_loan_legs).filter(
-                lambda t: t["days"] >= ibis.literal(365, type="decimal(38, 12)")
-            )
-        )
+        ((nsfr_loan_legs).filter(lambda t: t["days"] >= one_year_days))
         .aggregate(
             val=lambda t: (
                 ibis.greatest(t["amount"], ibis.literal(0, type="decimal(38, 12)"))

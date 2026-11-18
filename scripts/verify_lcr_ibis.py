@@ -63,6 +63,8 @@ OUTFLOW_SCHEMA = ibis.schema(
         "currency": "string",
         "amount": "decimal(38, 12)",
         "custom_rate": "decimal(38, 12)",
+        "has_apra_alt_amount": "boolean",
+        "apra_alt_amount": "decimal(38, 12)",
     }
 )
 
@@ -82,6 +84,10 @@ def make_tables(con, hqla, retail, outflows, inflows, caps=None):
         row + (False,) if len(row) == len(HQLA_SCHEMA.names) - 1 else row
         for row in hqla
     ]
+    outflow_rows = [
+        row + (False, Decimal(0)) if len(row) == len(OUTFLOW_SCHEMA.names) - 2 else row
+        for row in outflows
+    ]
     return (
         ibis.memtable(
             pd.DataFrame(hqla_rows, columns=list(HQLA_SCHEMA.names)), schema=HQLA_SCHEMA
@@ -91,7 +97,7 @@ def make_tables(con, hqla, retail, outflows, inflows, caps=None):
             schema=RETAIL_SCHEMA,
         ),
         ibis.memtable(
-            pd.DataFrame(outflows, columns=list(OUTFLOW_SCHEMA.names)),
+            pd.DataFrame(outflow_rows, columns=list(OUTFLOW_SCHEMA.names)),
             schema=OUTFLOW_SCHEMA,
         ),
         ibis.memtable(
@@ -145,6 +151,7 @@ def main():
             outf,
             inf,
             caps,
+            is_locally_incorporated=False,
             is_aud_only=False,
             is_level2=False,
             required_min_rate=Decimal("0.40"),
@@ -290,6 +297,7 @@ def main():
             outf2,
             inf2,
             caps2,
+            is_locally_incorporated=True,
             is_aud_only=True,
             is_level2=False,
             required_min_rate=Decimal("1.00"),
@@ -368,6 +376,7 @@ def main():
             outf3,
             inf3,
             caps3,
+            is_locally_incorporated=True,
             is_aud_only=False,
             is_level2=True,
             required_min_rate=Decimal("1.00"),
@@ -421,6 +430,7 @@ def main():
             outf4,
             inf4,
             caps4,
+            is_locally_incorporated=True,
             is_aud_only=False,
             is_level2=False,
             required_min_rate=Decimal("1.00"),
@@ -497,6 +507,7 @@ def main():
             outf5,
             inf5,
             caps5,
+            is_locally_incorporated=True,
             is_aud_only=False,
             is_level2=False,
             required_min_rate=Decimal("1.00"),

@@ -65,6 +65,7 @@ private def parseDeposit (j : Json) : Except String DepositAccount := do
     { accountId := ← (← getField j "account_id").getStr?
     , customerGroupId := ← (← getField j "customer_group_id").getStr?
     , customerType := ← parseCustomerType ctStr
+    , managedAsRetail := ← (← getField j "managed_as_retail").getBool?
     , productCategory := ← (← getField j "product_category").getStr?
     , balance := ← parseRat (← getField j "balance")
     , hasEarlyWithdrawalNoPenalty := ← (← getField j "has_early_withdrawal_no_penalty").getBool?
@@ -117,11 +118,19 @@ private def parseSftLeg (j : Json) : Except String SftLegRow := do
 
 private def parseClf (j : Json) : Except String ClfSummaryInput := do
   pure
-    { eligible := ← (← getField j "eligible").getBool?
+    { approvedByApra := ← (← getField j "approved_by_apra").getBool?
     , contractualAmount := ← parseRat (← getField j "contractual_amount")
     , pledgedZeroRunoff := ← parseRat (← getField j "pledged_zero_runoff")
     , receivedZeroInflow := ← parseRat (← getField j "received_zero_inflow")
     , collateralAfterMargin := ← parseRat (← getField j "collateral_after_margin")
+    , collateralDiversified := ← (← getField j "collateral_diversified").getBool?
+    , annualReapprovalCurrent := ← (← getField j "annual_reapproval_current").getBool?
+    , includedInFundingStrategy := ← (← getField j "included_in_funding_strategy").getBool?
+    , balanceSheetEffortsExhausted := ← (← getField j "balance_sheet_efforts_exhausted").getBool?
+    , clfDrawnNonIntraday := ← (← getField j "clf_drawn_non_intraday").getBool?
+    , drawdownAttestedAndNotifiedToApra := ← (← getField j "drawdown_attested_notified").getBool?
+    , collateralBecameIneligibleWithin30Days := ← (← getField j "collateral_became_ineligible_30d").getBool?
+    , collateralDaysSinceIneligible := (← (← getField j "collateral_days_since_ineligible").getNat?)
     }
 
 private def parseArr {α : Type} (j : Json) (k : String) (f : Json → Except String α) : Except String (List α) := do

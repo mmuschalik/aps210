@@ -124,7 +124,7 @@ def rsfEffectiveFactorExpr : SExpr :=
       (.col "on_behalf_of_customer_no_guarantee")
   let encApplied :=
     .ite (.col "has_exceptional_cb_factor")
-      (.col "exceptional_cb_factor")
+      (.unOp .nonNeg (.col "exceptional_cb_factor"))
       (.caseStr (.col "encumbrance")
         [ ("unencumbered", rsfBaseFactorExpr)
         , ("less_than_six_months", rsfBaseFactorExpr)
@@ -178,11 +178,13 @@ def nsfrProgram : Program :=
           "on_behalf_of_customer_no_guarantee", "has_exceptional_cb_factor",
           "exceptional_cb_factor", "is_interdependent_approved", "excluded_from_balance_sheet_rsf",
           "has_excess_clf_fallback_override", "excess_clf_fallback_factor"])
-      , ("obs_exposures", ["category", "amount"]) ]
+      , ("obs_exposures", ["category", "amount"])
+      , ("nsfr_deriv_contracts", ["netting_set_id", "has_eligible_mna", "mtm_asset", "mtm_liability"]) ]
     scalarParams :=
       [ ("required_min_rate", .rat)
       , ("gross_deriv_liabilities", .rat), ("variation_margin_posted", .rat)
       , ("gross_deriv_assets", .rat), ("eligible_cash_vm_received", .rat)
+      , ("cash_vm_eligibility_ok", .bool)
       , ("has_clf_limit", .bool), ("recognised_clf_limit", .rat), ("host_ala_in_lcr_limit", .rat)
       , ("internal_nsfr_buffer", .rat) ]
     lets :=
@@ -201,15 +203,42 @@ def nsfrProgram : Program :=
       , ("asset_rsf", .scalar (.binOp .add (.col "non_clf_rsf") (.binOp .add (.col "rsf_32a") (.col "rsf_32b"))))
       , ("obs_rsf", .aggSum (.table "obs_exposures")
           (.binOp .mul (.unOp .nonNeg (.col "amount")) obsFactorExpr))
+      , ("mna_deriv_net", .agg .sum
+          (.withColumns
+            [ ("pos_net_asset", .unOp .nonNeg (.binOp .sub (.col "net_asset") (.col "net_liab"))) ]
+            (.groupBy ["netting_set_id"]
+              [ ("net_asset", .sum, .unOp .nonNeg (.col "mtm_asset"))
+              , ("net_liab", .sum, .unOp .nonNeg (.col "mtm_liability")) ]
+              (.filter (.col "has_eligible_mna") (.table "nsfr_deriv_contracts"))))
+          (.col "pos_net_asset"))
+      , ("mna_deriv_net_liab", .agg .sum
+          (.withColumns
+            [ ("pos_net_liab", .unOp .nonNeg (.binOp .sub (.col "net_liab") (.col "net_asset"))) ]
+            (.groupBy ["netting_set_id"]
+              [ ("net_asset", .sum, .unOp .nonNeg (.col "mtm_asset"))
+              , ("net_liab", .sum, .unOp .nonNeg (.col "mtm_liability")) ]
+              (.filter (.col "has_eligible_mna") (.table "nsfr_deriv_contracts"))))
+          (.col "pos_net_liab"))
+      , ("gross_deriv_c_assets", .aggSum
+          (.filter (.unOp .not (.col "has_eligible_mna")) (.table "nsfr_deriv_contracts"))
+          (.unOp .nonNeg (.col "mtm_asset")))
+      , ("gross_deriv_c_liab", .aggSum
+          (.filter (.unOp .not (.col "has_eligible_mna")) (.table "nsfr_deriv_contracts"))
+          (.unOp .nonNeg (.col "mtm_liability")))
+      , ("eff_gross_deriv_liab", .scalar (.binOp .add (.unOp .nonNeg (.col "gross_deriv_liabilities"))
+          (.binOp .add (.col "mna_deriv_net_liab") (.col "gross_deriv_c_liab"))))
+      , ("eff_gross_deriv_assets", .scalar (.binOp .add (.unOp .nonNeg (.col "gross_deriv_assets"))
+          (.binOp .add (.col "mna_deriv_net") (.col "gross_deriv_c_assets"))))
+      , ("eff_vm_received", .scalar (.ite (.var "cash_vm_eligibility_ok")
+          (.unOp .nonNeg (.col "eligible_cash_vm_received")) (.litRat 0 1)))
       , ("nsfr_deriv_liab", .scalar (.unOp .nonNeg
-          (.binOp .sub (.unOp .nonNeg (.col "gross_deriv_liabilities"))
+          (.binOp .sub (.col "eff_gross_deriv_liab")
             (.unOp .nonNeg (.col "variation_margin_posted")))))
       , ("nsfr_deriv_assets", .scalar (.unOp .nonNeg
-          (.binOp .sub (.unOp .nonNeg (.col "gross_deriv_assets"))
-            (.unOp .nonNeg (.col "eligible_cash_vm_received")))))
+          (.binOp .sub (.col "eff_gross_deriv_assets") (.col "eff_vm_received"))))
       , ("net_deriv_rsf", .scalar (.unOp .nonNeg
           (.binOp .sub (.col "nsfr_deriv_assets") (.col "nsfr_deriv_liab"))))
-      , ("deriv_addon_rsf", .scalar (.binOp .mul (.litRat 20 100) (.unOp .nonNeg (.col "gross_deriv_liabilities"))))
+      , ("deriv_addon_rsf", .scalar (.binOp .mul (.litRat 20 100) (.col "eff_gross_deriv_liab")))
       , ("total_rsf", .scalar (.binOp .add (.col "asset_rsf")
           (.binOp .add (.col "obs_rsf") (.binOp .add (.col "net_deriv_rsf") (.col "deriv_addon_rsf")))))
       , ("compliant", .scalar

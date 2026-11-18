@@ -29,6 +29,8 @@ def CreditRatingGrade.ofCreditRating : CreditRating → CreditRatingGrade
   | .aPlus | .a | .aMinus => .grade2
   | .bbbPlus | .bbb | .bbbMinus => .grade3
   | .belowBbbMinus => .grade4
+  | .bRating => .grade5
+  | .belowBMinus => .grade6
   | .unrated => .unrated
 
 /-- APS 112 Attachment F (Multiple assessments):

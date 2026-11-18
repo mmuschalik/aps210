@@ -55,6 +55,8 @@ inductive CreditRating where
   | bbb
   | bbbMinus
   | belowBbbMinus
+  | bRating
+  | belowBMinus
   | unrated
   deriving DecidableEq, Repr
 

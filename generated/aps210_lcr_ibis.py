@@ -12,6 +12,7 @@ def evaluate_lcr(
     other_outflows,
     inflows,
     foreign_sov_currency_caps,
+    is_locally_incorporated,
     is_aud_only,
     is_level2,
     required_min_rate,
@@ -24,6 +25,7 @@ def evaluate_lcr(
     apra_inflow_cap_override,
     internal_lcr_buffer,
 ):
+    is_locally_incorporated = ibis.literal(bool(is_locally_incorporated))
     is_aud_only = ibis.literal(bool(is_aud_only))
     is_level2 = ibis.literal(bool(is_level2))
     required_min_rate = ibis.literal(
@@ -604,7 +606,22 @@ def evaluate_lcr(
                             (t["val"]).sum(), ibis.literal(0, type="decimal(38, 12)")
                         )
                     )
-                ).join(foreign_sov_currency_caps, "currency", how="left")
+                ).join(
+                    (foreign_sov_currency_caps)
+                    .group_by(["currency"])
+                    .aggregate(
+                        cap=lambda t: ibis.coalesce(
+                            (
+                                ibis.greatest(
+                                    t["cap"], ibis.literal(0, type="decimal(38, 12)")
+                                )
+                            ).min(),
+                            ibis.literal(0, type="decimal(38, 12)"),
+                        )
+                    ),
+                    "currency",
+                    how="left",
+                )
             ).mutate(
                 capped_val=lambda t: ibis.least(
                     t["cur_total"],
@@ -1177,9 +1194,12 @@ def evaluate_lcr(
         ((unadj_hqla1 + (unadj_hqla2a + unadj_hqla2b)) - (excess_15 + excess_40)),
         ibis.literal(0, type="decimal(38, 12)"),
     )
-    stock_of_hqla = stock_ex_clf + ibis.greatest(
-        clf_recognised, ibis.literal(0, type="decimal(38, 12)")
+    eff_clf_recognised = ibis.ifelse(
+        (is_locally_incorporated & is_aud_only),
+        ibis.greatest(clf_recognised, ibis.literal(0, type="decimal(38, 12)")),
+        ibis.literal(0, type="decimal(38, 12)"),
     )
+    stock_of_hqla = stock_ex_clf + eff_clf_recognised
     retail_out = ibis.coalesce(
         (
             (retail_deposits).filter(
@@ -1466,272 +1486,302 @@ def evaluate_lcr(
         )
         .aggregate(
             val=lambda t: (
-                ibis.greatest(t["amount"], ibis.literal(0, type="decimal(38, 12)"))
-                * ibis.cases(
+                ibis.ifelse(
                     (
-                        t["category"] == "retail_stable",
                         (
-                            ibis.literal(5, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
+                            t["category"]
+                            == ibis.literal("derivative_valuation_largest_30d_flow_24m")
+                        )
+                        & t["has_apra_alt_amount"]
+                    ),
+                    ibis.greatest(
+                        t["apra_alt_amount"], ibis.literal(0, type="decimal(38, 12)")
                     ),
                     (
-                        t["category"] == "retail_less_stable",
-                        (
-                            ibis.literal(10, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "retail_higher_runoff_less_stable",
-                        (
-                            ibis.literal(25, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "operational_deposit_insured",
-                        (
-                            ibis.literal(5, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "operational_deposit_uninsured",
-                        (
-                            ibis.literal(25, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "excess_operational_non_fin_insured",
-                        (
-                            ibis.literal(20, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "excess_operational_non_fin_uninsured",
-                        (
-                            ibis.literal(40, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "excess_operational_fi",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "wholesale_notice_deposit_called",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "non_op_corp_sov_cb_pse_mdb_sme_gt2m_insured",
-                        (
-                            ibis.literal(20, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"]
-                        == "non_op_corp_sov_cb_pse_mdb_sme_gt2m_uninsured",
-                        (
-                            ibis.literal(40, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "non_op_other",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "unsecured_debt_issuance",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "secured_by_hqla1",
-                        ibis.literal(0, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "secured_by_clf_eligible_within_limit",
-                        ibis.literal(0, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "secured_by_hqla2a",
-                        (
-                            ibis.literal(15, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "secured_domestic_sov_pse_mdb_rw_le20",
-                        (
-                            ibis.literal(25, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "secured_by_hqla2b_rmbs",
-                        (
-                            ibis.literal(25, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "secured_by_other_hqla2b",
-                        (
-                            ibis.literal(50, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "secured_all_other",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "structured_maturing_issued_by_adi",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "structured_spv_conduit_siv_loss_of_funding",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "derivatives_cash_outflows",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "downgrade_three_notch_collateral",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "excess_non_segregated_collateral_callable",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"]
-                        == "contractually_required_collateral_not_yet_demanded",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "collateral_substitution_to_non_hqla",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "derivative_valuation_largest_30d_flow_24m",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "posted_non_hqla1_collateral_valuation_change",
-                        (
-                            ibis.literal(20, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "committed_facility_retail_and_sme",
-                        (
-                            ibis.literal(5, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "committed_credit_non_fin_corp_sov_cb_pse",
-                        (
-                            ibis.literal(10, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "committed_liquidity_non_fin_corp_sov_cb_pse",
-                        (
-                            ibis.literal(30, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "committed_facility_banks_and_supervised_adis",
-                        (
-                            ibis.literal(40, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"]
-                        == "committed_credit_other_financial_institutions",
-                        (
-                            ibis.literal(40, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"]
-                        == "committed_liquidity_other_financial_institutions",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "committed_facility_other_legal_entities",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "revocable_credit_and_liquidity_facilities",
-                        (
-                            ibis.literal(5, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "trade_finance_obligations",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "guarantees_and_lcs_non_trade_finance",
-                        (
-                            ibis.literal(50, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "buybacks_domestic_debt_short_term",
                         ibis.greatest(
-                            t["custom_rate"], ibis.literal(0, type="decimal(38, 12)")
-                        ),
+                            t["amount"], ibis.literal(0, type="decimal(38, 12)")
+                        )
+                        * ibis.cases(
+                            (
+                                t["category"] == "retail_stable",
+                                (
+                                    ibis.literal(5, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "retail_less_stable",
+                                (
+                                    ibis.literal(10, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "retail_higher_runoff_less_stable",
+                                (
+                                    ibis.literal(25, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "operational_deposit_insured",
+                                (
+                                    ibis.literal(5, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "operational_deposit_uninsured",
+                                (
+                                    ibis.literal(25, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "excess_operational_non_fin_insured",
+                                (
+                                    ibis.literal(20, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "excess_operational_non_fin_uninsured",
+                                (
+                                    ibis.literal(40, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "excess_operational_fi",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"] == "wholesale_notice_deposit_called",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"]
+                                == "non_op_corp_sov_cb_pse_mdb_sme_gt2m_insured",
+                                (
+                                    ibis.literal(20, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"]
+                                == "non_op_corp_sov_cb_pse_mdb_sme_gt2m_uninsured",
+                                (
+                                    ibis.literal(40, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "non_op_other",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"] == "unsecured_debt_issuance",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"] == "secured_by_hqla1",
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"] == "secured_by_clf_eligible_within_limit",
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"] == "secured_by_hqla2a",
+                                (
+                                    ibis.literal(15, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "secured_domestic_sov_pse_mdb_rw_le20",
+                                (
+                                    ibis.literal(25, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "secured_by_hqla2b_rmbs",
+                                (
+                                    ibis.literal(25, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "secured_by_other_hqla2b",
+                                (
+                                    ibis.literal(50, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "secured_all_other",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"] == "structured_maturing_issued_by_adi",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"]
+                                == "structured_spv_conduit_siv_loss_of_funding",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"] == "derivatives_cash_outflows",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"] == "downgrade_three_notch_collateral",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"]
+                                == "excess_non_segregated_collateral_callable",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"]
+                                == "contractually_required_collateral_not_yet_demanded",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"] == "collateral_substitution_to_non_hqla",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"]
+                                == "derivative_valuation_largest_30d_flow_24m",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"]
+                                == "posted_non_hqla1_collateral_valuation_change",
+                                (
+                                    ibis.literal(20, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "committed_facility_retail_and_sme",
+                                (
+                                    ibis.literal(5, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"]
+                                == "committed_credit_non_fin_corp_sov_cb_pse",
+                                (
+                                    ibis.literal(10, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"]
+                                == "committed_liquidity_non_fin_corp_sov_cb_pse",
+                                (
+                                    ibis.literal(30, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"]
+                                == "committed_facility_banks_and_supervised_adis",
+                                (
+                                    ibis.literal(40, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"]
+                                == "committed_credit_other_financial_institutions",
+                                (
+                                    ibis.literal(40, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"]
+                                == "committed_liquidity_other_financial_institutions",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"]
+                                == "committed_facility_other_legal_entities",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"]
+                                == "revocable_credit_and_liquidity_facilities",
+                                (
+                                    ibis.literal(5, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "trade_finance_obligations",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"] == "guarantees_and_lcs_non_trade_finance",
+                                (
+                                    ibis.literal(50, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "buybacks_domestic_debt_short_term",
+                                ibis.greatest(
+                                    t["custom_rate"],
+                                    ibis.literal(0, type="decimal(38, 12)"),
+                                ),
+                            ),
+                            (
+                                t["category"] == "buybacks_domestic_debt_long_term",
+                                ibis.greatest(
+                                    t["custom_rate"],
+                                    ibis.literal(0, type="decimal(38, 12)"),
+                                ),
+                            ),
+                            (
+                                t["category"]
+                                == "non_contractual_structured_products_and_managed_funds",
+                                (
+                                    ibis.literal(5, type="decimal(38, 12)")
+                                    / ibis.literal(100, type="decimal(38, 12)")
+                                ),
+                            ),
+                            (
+                                t["category"] == "affiliated_dealer_or_market_maker",
+                                ibis.greatest(
+                                    t["custom_rate"],
+                                    ibis.literal(0, type="decimal(38, 12)"),
+                                ),
+                            ),
+                            (
+                                t["category"] == "other_non_contractual_contingent",
+                                ibis.greatest(
+                                    t["custom_rate"],
+                                    ibis.literal(0, type="decimal(38, 12)"),
+                                ),
+                            ),
+                            (
+                                t["category"] == "collateral_swap_apra_method",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            (
+                                t["category"] == "other_contractual_cash_outflows",
+                                ibis.literal(1, type="decimal(38, 12)"),
+                            ),
+                            else_=ibis.literal(0, type="decimal(38, 12)"),
+                        )
                     ),
-                    (
-                        t["category"] == "buybacks_domestic_debt_long_term",
-                        ibis.greatest(
-                            t["custom_rate"], ibis.literal(0, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"]
-                        == "non_contractual_structured_products_and_managed_funds",
-                        (
-                            ibis.literal(5, type="decimal(38, 12)")
-                            / ibis.literal(100, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "affiliated_dealer_or_market_maker",
-                        ibis.greatest(
-                            t["custom_rate"], ibis.literal(0, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "other_non_contractual_contingent",
-                        ibis.greatest(
-                            t["custom_rate"], ibis.literal(0, type="decimal(38, 12)")
-                        ),
-                    ),
-                    (
-                        t["category"] == "collateral_swap_apra_method",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    (
-                        t["category"] == "other_contractual_cash_outflows",
-                        ibis.literal(1, type="decimal(38, 12)"),
-                    ),
-                    else_=ibis.literal(0, type="decimal(38, 12)"),
                 )
             ).sum()
         )["val"]
@@ -1881,17 +1931,21 @@ def evaluate_lcr(
     net_cash_outflows = ibis.greatest(
         (gross_outflows - capped_inflows), ibis.literal(0, type="decimal(38, 12)")
     )
-    ho_facility_recognised = ibis.least(
-        ibis.greatest(
-            foreign_ho_facility_eligible, ibis.literal(0, type="decimal(38, 12)")
-        ),
-        (
+    ho_facility_recognised = ibis.ifelse(
+        (~(is_locally_incorporated)),
+        ibis.least(
+            ibis.greatest(
+                foreign_ho_facility_eligible, ibis.literal(0, type="decimal(38, 12)")
+            ),
             (
-                ibis.literal(50, type="decimal(38, 12)")
-                / ibis.literal(100, type="decimal(38, 12)")
-            )
-            * (required_min_rate * net_cash_outflows)
+                (
+                    ibis.literal(50, type="decimal(38, 12)")
+                    / ibis.literal(100, type="decimal(38, 12)")
+                )
+                * (required_min_rate * net_cash_outflows)
+            ),
         ),
+        ibis.literal(0, type="decimal(38, 12)"),
     )
     lcr_numerator = stock_of_hqla + ho_facility_recognised
     compliant = ibis.ifelse(

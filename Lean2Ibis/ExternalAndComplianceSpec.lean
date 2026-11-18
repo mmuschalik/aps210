@@ -84,7 +84,9 @@ def complianceGateProgram : Program :=
       , ("stress_testing_ok", .bool)
       , ("loc_assessed_annually", .bool)
       , ("loc_outage_min_days", .rat)
+      , ("loc_covers_tz_holidays", .bool)
       , ("in_financial_stress", .bool)
+      , ("experiencing_severe_stress", .bool)
       , ("notified_apra_immediately", .bool)
       , ("lcr_aud_compliant", .bool)
       , ("lcr_all_compliant", .bool)
@@ -99,6 +101,8 @@ def complianceGateProgram : Program :=
       , ("has_buffer_policy", .bool)
       , ("buffer_policy_waived_during_stress", .bool)
       , ("all_buffers_met", .bool)
+      , ("has_custom_buffer_floor", .bool)
+      , ("custom_buffer_floor_met", .bool)
       , ("exclude_lcr_aud", .bool)
       , ("exclude_lcr_all", .bool)
       , ("exclude_mlh", .bool)
@@ -112,7 +116,14 @@ def complianceGateProgram : Program :=
       , ("has_override_nsfr", .bool)
       , ("override_nsfr", .rat)
       , ("offshore_subs_all_ge_100pct", .bool)
-      , ("securitisation_lcr_ok", .bool) ]
+      , ("securitisation_lcr_ok", .bool)
+      , ("spv_excluded_from_mlh_nsfr", .bool)
+      , ("may_exclude_spv_from_mlh_nsfr", .bool)
+      , ("has_apra_adj_or_excl", .bool)
+      , ("apra_adj_complied", .bool)
+      , ("seeks_prior_discretion", .bool)
+      , ("notified_apra_discretion", .bool)
+      , ("cf_survival_met", .bool) ]
     lets :=
       [ ("required_aud_lcr", .scalar
           (.ite (.col "exclude_lcr_aud") (.litRat 0 1)
@@ -134,14 +145,17 @@ def complianceGateProgram : Program :=
               (.binOp .max (.litRat 100 100) (.col "apra_higher_min_nsfr")))))
       , ("loc_ok", .scalar
           (.binOp .or (.col "is_locally_incorporated")
-            (.binOp .and (.col "loc_assessed_annually") (.binOp .le (.litRat 3 1) (.col "loc_outage_min_days")))))
+            (.binOp .and (.col "loc_assessed_annually")
+              (.binOp .and (.binOp .le (.litRat 3 1) (.col "loc_outage_min_days"))
+                (.col "loc_covers_tz_holidays")))))
       , ("stress_ok", .scalar
           (.binOp .or (.unOp .not (.col "is_lcr_adi")) (.col "stress_testing_ok")))
       , ("qualitative_compliant", .scalar
           (.binOp .and (.col "base_governance_ok")
             (.binOp .and (.col "stress_ok") (.col "loc_ok"))))
       , ("stress_breach_permitted", .scalar
-          (.binOp .and (.col "in_financial_stress") (.col "notified_apra_immediately")))
+          (.binOp .and (.col "in_financial_stress")
+            (.binOp .and (.col "experiencing_severe_stress") (.col "notified_apra_immediately"))))
       , ("lcr_aud_ok", .scalar
           (.binOp .or (.col "exclude_lcr_aud")
             (.binOp .or (.unOp .not (.col "is_locally_incorporated"))
@@ -173,14 +187,26 @@ def complianceGateProgram : Program :=
                 (.binOp .or (.unOp .not (.col "has_level2_group")) (.col "nsfr_l2_compliant"))))))
       , ("buffer_policy_ok", .scalar
           (.binOp .and (.col "has_buffer_policy")
-            (.binOp .or (.col "all_buffers_met")
-              (.binOp .and (.col "buffer_policy_waived_during_stress") (.col "stress_breach_permitted")))))
+            (.ite (.col "has_custom_buffer_floor")
+              (.col "custom_buffer_floor_met")
+              (.binOp .or (.col "all_buffers_met")
+                (.binOp .and (.col "buffer_policy_waived_during_stress") (.col "stress_breach_permitted"))))))
+      , ("sec_ok", .scalar
+          (.binOp .and (.col "securitisation_lcr_ok")
+            (.binOp .or (.unOp .not (.col "spv_excluded_from_mlh_nsfr"))
+              (.col "may_exclude_spv_from_mlh_nsfr"))))
+      , ("apra_discretion_ok", .scalar
+          (.binOp .and
+            (.binOp .or (.unOp .not (.col "has_apra_adj_or_excl")) (.col "apra_adj_complied"))
+            (.binOp .or (.unOp .not (.col "seeks_prior_discretion")) (.col "notified_apra_discretion"))))
       , ("quantitative_compliant", .scalar
           (.binOp .and (.col "lcr_ok")
             (.binOp .and (.col "mlh_ok")
               (.binOp .and (.col "nsfr_ok")
                 (.binOp .and (.col "buffer_policy_ok")
-                  (.binOp .and (.col "offshore_subs_all_ge_100pct") (.col "securitisation_lcr_ok")))))))
+                  (.binOp .and (.col "offshore_subs_all_ge_100pct")
+                    (.binOp .and (.col "sec_ok")
+                      (.binOp .and (.col "apra_discretion_ok") (.col "cf_survival_met")))))))))
       , ("overall_compliant", .scalar
           (.binOp .and (.col "qualitative_compliant") (.col "quantitative_compliant"))) ]
     outputs :=

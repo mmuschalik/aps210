@@ -322,14 +322,22 @@ structure ClfInput where
   clfDrawnNonIntraday : Bool := false
   /-- Para 21: If drawn non-intraday, senior management attestation and APRA notice completed. -/
   drawdownAttestedAndNotifiedToApra : Bool := false
+  /-- Para 25: Optional 30-day grace period if CLF collateral recently became ineligible. -/
+  collateralBecameIneligibleWithin30Days : Bool := false
+  /-- Para 25: Numeric day count since CLF collateral became ineligible (when supplied, must be <= 30). -/
+  collateralDaysSinceIneligible : Option Nat := none
   deriving DecidableEq, Repr
 
-/-- Attachment A, Paragraphs 16–21: Whether CLF governance, operational, and diversification conditions hold. -/
+/-- Attachment A, Paragraphs 16–21 & 25: Whether CLF governance, operational, diversification, and grace conditions hold. -/
 def ClfInput.processEligible (clf : ClfInput) : Bool :=
   let opOk := match clf.collateralOperational with
     | some op => op.isMet
     | none => true
+  let graceOk := !clf.collateralBecameIneligibleWithin30Days || match clf.collateralDaysSinceIneligible with
+    | some d => d <= 30
+    | none => true
   opOk &&
+  graceOk &&
   clf.collateralDiversified &&
   clf.annualReapprovalCurrent &&
   clf.includedInFundingStrategy &&
@@ -362,9 +370,12 @@ def computeCappedForeignSovHqla1
   let distinctCurrencies := (para9eAssets.map (·.currency)).eraseDups
   distinctCurrencies.foldl (fun acc cur =>
     let curTotal := sumBy (para9eAssets.filter (·.currency == cur)) (HqlaAsset.valueAfterHaircut basis)
-    match foreignSovCurrencyCaps.find? (fun (c, _) => c == cur) with
-    | some (_, cap) => acc + min curTotal (nonNeg cap)
-    | none => acc
+    let matchingCaps := foreignSovCurrencyCaps.filter (fun (c, _) => c == cur)
+    match matchingCaps with
+    | [] => acc
+    | (_, cap0) :: rest =>
+      let effCap := rest.foldl (fun m (_, c) => min m (nonNeg c)) (nonNeg cap0)
+      acc + min curTotal effCap
   ) 0
 
 /-- Compute total HQLA stock (including CLF for AUD LCR of locally incorporated ADIs). -/

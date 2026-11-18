@@ -10,11 +10,13 @@ def evaluate_nsfr(
     asf_items,
     rsf_assets,
     obs_exposures,
+    nsfr_deriv_contracts,
     required_min_rate,
     gross_deriv_liabilities,
     variation_margin_posted,
     gross_deriv_assets,
     eligible_cash_vm_received,
+    cash_vm_eligibility_ok,
     has_clf_limit,
     recognised_clf_limit,
     host_ala_in_lcr_limit,
@@ -35,6 +37,7 @@ def evaluate_nsfr(
     eligible_cash_vm_received = ibis.literal(
         Decimal(str(eligible_cash_vm_received)), type="decimal(38, 12)"
     )
+    cash_vm_eligibility_ok = ibis.literal(bool(cash_vm_eligibility_ok))
     has_clf_limit = ibis.literal(bool(has_clf_limit))
     recognised_clf_limit = ibis.literal(
         Decimal(str(recognised_clf_limit)), type="decimal(38, 12)"
@@ -233,7 +236,10 @@ def evaluate_nsfr(
                                     ibis.literal(0, type="decimal(38, 12)"),
                                     ibis.ifelse(
                                         t["has_exceptional_cb_factor"],
-                                        t["exceptional_cb_factor"],
+                                        ibis.greatest(
+                                            t["exceptional_cb_factor"],
+                                            ibis.literal(0, type="decimal(38, 12)"),
+                                        ),
                                         ibis.cases(
                                             (
                                                 t["encumbrance"] == "unencumbered",
@@ -1224,7 +1230,10 @@ def evaluate_nsfr(
                                     ibis.literal(0, type="decimal(38, 12)"),
                                     ibis.ifelse(
                                         t["has_exceptional_cb_factor"],
-                                        t["exceptional_cb_factor"],
+                                        ibis.greatest(
+                                            t["exceptional_cb_factor"],
+                                            ibis.literal(0, type="decimal(38, 12)"),
+                                        ),
                                         ibis.cases(
                                             (
                                                 t["encumbrance"] == "unencumbered",
@@ -2217,7 +2226,10 @@ def evaluate_nsfr(
                     ibis.literal(0, type="decimal(38, 12)"),
                     ibis.ifelse(
                         t["has_exceptional_cb_factor"],
-                        t["exceptional_cb_factor"],
+                        ibis.greatest(
+                            t["exceptional_cb_factor"],
+                            ibis.literal(0, type="decimal(38, 12)"),
+                        ),
                         ibis.cases(
                             (
                                 t["encumbrance"] == "unencumbered",
@@ -2808,7 +2820,10 @@ def evaluate_nsfr(
                             ibis.literal(0, type="decimal(38, 12)"),
                             ibis.ifelse(
                                 t["has_exceptional_cb_factor"],
-                                t["exceptional_cb_factor"],
+                                ibis.greatest(
+                                    t["exceptional_cb_factor"],
+                                    ibis.literal(0, type="decimal(38, 12)"),
+                                ),
                                 ibis.cases(
                                     (
                                         t["encumbrance"] == "unencumbered",
@@ -3694,9 +3709,15 @@ def evaluate_nsfr(
                                                                 t[
                                                                     "has_exceptional_cb_factor"
                                                                 ],
-                                                                t[
-                                                                    "exceptional_cb_factor"
-                                                                ],
+                                                                ibis.greatest(
+                                                                    t[
+                                                                        "exceptional_cb_factor"
+                                                                    ],
+                                                                    ibis.literal(
+                                                                        0,
+                                                                        type="decimal(38, 12)",
+                                                                    ),
+                                                                ),
                                                                 ibis.cases(
                                                                     (
                                                                         t["encumbrance"]
@@ -4961,9 +4982,15 @@ def evaluate_nsfr(
                                                                 t[
                                                                     "has_exceptional_cb_factor"
                                                                 ],
-                                                                t[
-                                                                    "exceptional_cb_factor"
-                                                                ],
+                                                                ibis.greatest(
+                                                                    t[
+                                                                        "exceptional_cb_factor"
+                                                                    ],
+                                                                    ibis.literal(
+                                                                        0,
+                                                                        type="decimal(38, 12)",
+                                                                    ),
+                                                                ),
                                                                 ibis.cases(
                                                                     (
                                                                         t["encumbrance"]
@@ -6209,11 +6236,114 @@ def evaluate_nsfr(
         .as_scalar(),
         ibis.literal(0, type="decimal(38, 12)"),
     )
+    mna_deriv_net = ibis.coalesce(
+        (
+            (
+                ((nsfr_deriv_contracts).filter(lambda t: t["has_eligible_mna"]))
+                .group_by(["netting_set_id"])
+                .aggregate(
+                    net_asset=lambda t: ibis.coalesce(
+                        (
+                            ibis.greatest(
+                                t["mtm_asset"], ibis.literal(0, type="decimal(38, 12)")
+                            )
+                        ).sum(),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    ),
+                    net_liab=lambda t: ibis.coalesce(
+                        (
+                            ibis.greatest(
+                                t["mtm_liability"],
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            )
+                        ).sum(),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    ),
+                )
+            ).mutate(
+                pos_net_asset=lambda t: ibis.greatest(
+                    (t["net_asset"] - t["net_liab"]),
+                    ibis.literal(0, type="decimal(38, 12)"),
+                )
+            )
+        )
+        .aggregate(val=lambda t: (t["pos_net_asset"]).sum())["val"]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
+    mna_deriv_net_liab = ibis.coalesce(
+        (
+            (
+                ((nsfr_deriv_contracts).filter(lambda t: t["has_eligible_mna"]))
+                .group_by(["netting_set_id"])
+                .aggregate(
+                    net_asset=lambda t: ibis.coalesce(
+                        (
+                            ibis.greatest(
+                                t["mtm_asset"], ibis.literal(0, type="decimal(38, 12)")
+                            )
+                        ).sum(),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    ),
+                    net_liab=lambda t: ibis.coalesce(
+                        (
+                            ibis.greatest(
+                                t["mtm_liability"],
+                                ibis.literal(0, type="decimal(38, 12)"),
+                            )
+                        ).sum(),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    ),
+                )
+            ).mutate(
+                pos_net_liab=lambda t: ibis.greatest(
+                    (t["net_liab"] - t["net_asset"]),
+                    ibis.literal(0, type="decimal(38, 12)"),
+                )
+            )
+        )
+        .aggregate(val=lambda t: (t["pos_net_liab"]).sum())["val"]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
+    gross_deriv_c_assets = ibis.coalesce(
+        ((nsfr_deriv_contracts).filter(lambda t: ~(t["has_eligible_mna"])))
+        .aggregate(
+            val=lambda t: (
+                ibis.greatest(t["mtm_asset"], ibis.literal(0, type="decimal(38, 12)"))
+            ).sum()
+        )["val"]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
+    gross_deriv_c_liab = ibis.coalesce(
+        ((nsfr_deriv_contracts).filter(lambda t: ~(t["has_eligible_mna"])))
+        .aggregate(
+            val=lambda t: (
+                ibis.greatest(
+                    t["mtm_liability"], ibis.literal(0, type="decimal(38, 12)")
+                )
+            ).sum()
+        )["val"]
+        .as_scalar(),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
+    eff_gross_deriv_liab = ibis.greatest(
+        gross_deriv_liabilities, ibis.literal(0, type="decimal(38, 12)")
+    ) + (mna_deriv_net_liab + gross_deriv_c_liab)
+    eff_gross_deriv_assets = ibis.greatest(
+        gross_deriv_assets, ibis.literal(0, type="decimal(38, 12)")
+    ) + (mna_deriv_net + gross_deriv_c_assets)
+    eff_vm_received = ibis.ifelse(
+        cash_vm_eligibility_ok,
+        ibis.greatest(
+            eligible_cash_vm_received, ibis.literal(0, type="decimal(38, 12)")
+        ),
+        ibis.literal(0, type="decimal(38, 12)"),
+    )
     nsfr_deriv_liab = ibis.greatest(
         (
-            ibis.greatest(
-                gross_deriv_liabilities, ibis.literal(0, type="decimal(38, 12)")
-            )
+            eff_gross_deriv_liab
             - ibis.greatest(
                 variation_margin_posted, ibis.literal(0, type="decimal(38, 12)")
             )
@@ -6221,12 +6351,7 @@ def evaluate_nsfr(
         ibis.literal(0, type="decimal(38, 12)"),
     )
     nsfr_deriv_assets = ibis.greatest(
-        (
-            ibis.greatest(gross_deriv_assets, ibis.literal(0, type="decimal(38, 12)"))
-            - ibis.greatest(
-                eligible_cash_vm_received, ibis.literal(0, type="decimal(38, 12)")
-            )
-        ),
+        (eff_gross_deriv_assets - eff_vm_received),
         ibis.literal(0, type="decimal(38, 12)"),
     )
     net_deriv_rsf = ibis.greatest(
@@ -6235,7 +6360,7 @@ def evaluate_nsfr(
     deriv_addon_rsf = (
         ibis.literal(20, type="decimal(38, 12)")
         / ibis.literal(100, type="decimal(38, 12)")
-    ) * ibis.greatest(gross_deriv_liabilities, ibis.literal(0, type="decimal(38, 12)"))
+    ) * eff_gross_deriv_liab
     total_rsf = asset_rsf + (obs_rsf + (net_deriv_rsf + deriv_addon_rsf))
     compliant = ibis.ifelse(
         (total_rsf <= ibis.literal(0, type="decimal(38, 12)")),

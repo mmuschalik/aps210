@@ -73,6 +73,7 @@ def generate_dataset(seed: int) -> dict:
                 "account_id": f"dep_{i:03d}",
                 "customer_group_id": f"cg_{rng.randint(1, 15):02d}",
                 "customer_type": rng.choice(["retail", "retail", "sme", "wholesale"]),
+                "managed_as_retail": rng.random() < 0.85,
                 "product_category": f"prod_{rng.randint(1, 5)}",
                 "balance": rng.randint(25_000, 1_500_000),
                 "has_early_withdrawal_no_penalty": rng.random() < 0.12,
@@ -165,11 +166,19 @@ def generate_dataset(seed: int) -> dict:
         )
 
     clf = {
-        "eligible": rng.random() < 0.85,
+        "approved_by_apra": rng.random() < 0.90,
         "contractual_amount": rng.randint(5_000_000, 25_000_000),
         "pledged_zero_runoff": rng.randint(0, 5_000_000),
         "received_zero_inflow": rng.randint(0, 3_000_000),
         "collateral_after_margin": rng.randint(5_000_000, 25_000_000),
+        "collateral_diversified": rng.random() < 0.90,
+        "annual_reapproval_current": rng.random() < 0.95,
+        "included_in_funding_strategy": True,
+        "balance_sheet_efforts_exhausted": True,
+        "clf_drawn_non_intraday": False,
+        "drawdown_attested_notified": False,
+        "collateral_became_ineligible_30d": False,
+        "collateral_days_since_ineligible": 0,
     }
 
     return {
@@ -239,11 +248,19 @@ def run_ibis(data: dict) -> dict[str, Decimal]:
         sft_legs,
         reporting_date,
         data["is_aud_only"],
-        clf["eligible"],
+        clf["approved_by_apra"],
         Decimal(clf["contractual_amount"]),
         Decimal(clf["pledged_zero_runoff"]),
         Decimal(clf["received_zero_inflow"]),
         Decimal(clf["collateral_after_margin"]),
+        clf["collateral_diversified"],
+        clf["annual_reapproval_current"],
+        clf["included_in_funding_strategy"],
+        clf["balance_sheet_efforts_exhausted"],
+        clf["clf_drawn_non_intraday"],
+        clf["drawdown_attested_notified"],
+        clf["collateral_became_ineligible_30d"],
+        Decimal(clf["collateral_days_since_ineligible"]),
     )
     out: dict[str, Decimal | bool] = {}
     for k, v in exprs.items():

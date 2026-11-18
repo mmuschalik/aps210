@@ -97,7 +97,7 @@ def RetailDeposit.runoffRate (basis : ConsolidationBasis := .level1) (d : Retail
   if bal > 0 then
     d.outflowAmount basis / bal
   else if d.isIntermediated && !d.intermediatedLookThroughMet then
-    if !d.noticeDepositCalled && d.residualMaturityOrNoticeGt30Days && d.noWithdrawalRightOrMaterialPenalty then pct 0
+    if d.isExcludedTermDeposit then pct 0
     else pct 100
   else if d.noticeDepositCalled then pct 100
   else if d.isExcludedTermDeposit then pct 0

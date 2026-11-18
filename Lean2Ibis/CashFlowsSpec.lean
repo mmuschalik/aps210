@@ -121,7 +121,8 @@ def cashFlowsProgram : Program :=
           , "has_earliest_call", "earliest_call_days"
           , "has_latest_extension", "latest_extension_days"
           , "is_open_maturity", "is_minimum_contractual_payment"
-          , "is_non_financial_revenue", "counted_in_hqla", "is_performing", "source" ])
+          , "is_non_financial_revenue", "counted_in_hqla", "is_performing", "source"
+          , "counterparty", "has_valid_mna", "is_same_day_fx_principal_exchange" ])
       , ("lcr_derivative_legs",
           [ "counterparty", "currency", "has_valid_mna", "is_same_day_fx_principal_exchange"
           , "payable", "receivable", "uncounted_hqla_collateral" ])
@@ -129,12 +130,15 @@ def cashFlowsProgram : Program :=
       , ("nsfr_loan_legs", ["id", "amount", "days"])
       ]
   , scalarParams :=
-      [ ("initial_liquid_buffer", .rat)
+      [ ("reporting_date", .date)
+      , ("initial_liquid_buffer", .rat)
       , ("use_currency_filter", .bool)
       , ("target_currency", .str)
       ]
   , lets :=
-      [ ("min_cum_net_cf", .agg .min cashFlowLadderRel (.col "cum_net_cash_flow"))
+      [ ("six_months_days", .scalar (.binOp .dateDiff (.dateAddMonths (.var "reporting_date") 6) (.var "reporting_date")))
+      , ("one_year_days", .scalar (.binOp .dateDiff (.dateAddMonths (.var "reporting_date") 12) (.var "reporting_date")))
+      , ("min_cum_net_cf", .agg .min cashFlowLadderRel (.col "cum_net_cash_flow"))
       , ("survival_buffer_met", .scalar
           (.binOp .ge
             (.binOp .add (.unOp .nonNeg (.var "initial_liquid_buffer")) (.var "min_cum_net_cf"))
@@ -160,35 +164,81 @@ def cashFlowsProgram : Program :=
                 (.binOp .ne (.col "source") (.litStr "derivative")))
               enrichedCashFlowsRel)
             (.col "nonneg_amt"))
+      , ("cf_deriv_nettable_out", .agg .sum
+          (.withColumns
+            [ ("net_out", .unOp .nonNeg (.binOp .sub (.col "tot_pay") (.col "tot_rec"))) ]
+            (.groupBy ["counterparty", "currency"]
+              [ ("tot_pay", .sum, .ite (.col "is_lcr_outflow_30d") (.col "nonneg_amt") (.litRat 0 1))
+              , ("tot_rec", .sum, .ite (.col "is_elig_lcr_inflow") (.col "nonneg_amt") (.litRat 0 1)) ]
+              (.filter
+                (.binOp .and (.binOp .eq (.col "source") (.litStr "derivative"))
+                  (.binOp .and (.col "has_valid_mna")
+                    (.unOp .not (.col "is_same_day_fx_principal_exchange"))))
+                enrichedCashFlowsRel)))
+          (.col "net_out"))
+      , ("cf_deriv_nettable_in", .agg .sum
+          (.withColumns
+            [ ("net_in", .unOp .nonNeg (.binOp .sub (.col "tot_rec") (.col "tot_pay"))) ]
+            (.groupBy ["counterparty", "currency"]
+              [ ("tot_pay", .sum, .ite (.col "is_lcr_outflow_30d") (.col "nonneg_amt") (.litRat 0 1))
+              , ("tot_rec", .sum, .ite (.col "is_elig_lcr_inflow") (.col "nonneg_amt") (.litRat 0 1)) ]
+              (.filter
+                (.binOp .and (.binOp .eq (.col "source") (.litStr "derivative"))
+                  (.binOp .and (.col "has_valid_mna")
+                    (.unOp .not (.col "is_same_day_fx_principal_exchange"))))
+                enrichedCashFlowsRel)))
+          (.col "net_in"))
+      , ("cf_deriv_outflow_30d",
+          .agg .sum
+            (.filter
+              (.binOp .and (.col "is_lcr_outflow_30d")
+                (.binOp .and (.binOp .eq (.col "source") (.litStr "derivative"))
+                  (.binOp .or (.unOp .not (.col "has_valid_mna"))
+                    (.col "is_same_day_fx_principal_exchange"))))
+              enrichedCashFlowsRel)
+            (.col "nonneg_amt"))
+      , ("cf_deriv_inflow_30d",
+          .agg .sum
+            (.filter
+              (.binOp .and (.col "is_elig_lcr_inflow")
+                (.binOp .and (.binOp .eq (.col "source") (.litStr "derivative"))
+                  (.binOp .or (.unOp .not (.col "has_valid_mna"))
+                    (.col "is_same_day_fx_principal_exchange"))))
+              enrichedCashFlowsRel)
+            (.col "nonneg_amt"))
       , ("deriv_net_outflow", .agg .sum derivNettableRel (.col "net_outflow"))
       , ("deriv_net_inflow", .agg .sum derivNettableRel (.col "net_inflow"))
       , ("deriv_gross_outflow", .agg .sum derivGrossRel (.col "gross_outflow"))
       , ("deriv_gross_inflow", .agg .sum derivGrossRel (.col "gross_inflow"))
-      , ("lcr_deriv_outflow", .scalar (.binOp .add (.var "deriv_net_outflow") (.var "deriv_gross_outflow")))
-      , ("lcr_deriv_inflow", .scalar (.binOp .add (.var "deriv_net_inflow") (.var "deriv_gross_inflow")))
+      , ("lcr_deriv_outflow", .scalar (.binOp .add (.var "cf_deriv_nettable_out")
+          (.binOp .add (.var "cf_deriv_outflow_30d")
+            (.binOp .add (.var "deriv_net_outflow") (.var "deriv_gross_outflow")))))
+      , ("lcr_deriv_inflow", .scalar (.binOp .add (.var "cf_deriv_nettable_in")
+          (.binOp .add (.var "cf_deriv_inflow_30d")
+            (.binOp .add (.var "deriv_net_inflow") (.var "deriv_gross_inflow")))))
       , ("nsfr_asf_lt6m",
           .agg .sum
-            (.filter (.binOp .lt (.col "days") (.litRat 180 1)) (.table "nsfr_liability_legs"))
+            (.filter (.binOp .lt (.col "days") (.var "six_months_days")) (.table "nsfr_liability_legs"))
             (.unOp .nonNeg (.col "amount")))
       , ("nsfr_asf_6m_to_1y",
           .agg .sum
             (.filter
               (.binOp .and
-                (.binOp .ge (.col "days") (.litRat 180 1))
-                (.binOp .lt (.col "days") (.litRat 365 1)))
+                (.binOp .ge (.col "days") (.var "six_months_days"))
+                (.binOp .lt (.col "days") (.var "one_year_days")))
               (.table "nsfr_liability_legs"))
             (.unOp .nonNeg (.col "amount")))
       , ("nsfr_asf_ge1y",
           .agg .sum
-            (.filter (.binOp .ge (.col "days") (.litRat 365 1)) (.table "nsfr_liability_legs"))
+            (.filter (.binOp .ge (.col "days") (.var "one_year_days")) (.table "nsfr_liability_legs"))
             (.unOp .nonNeg (.col "amount")))
       , ("nsfr_loan_lt1y",
           .agg .sum
-            (.filter (.binOp .lt (.col "days") (.litRat 365 1)) (.table "nsfr_loan_legs"))
+            (.filter (.binOp .lt (.col "days") (.var "one_year_days")) (.table "nsfr_loan_legs"))
             (.unOp .nonNeg (.col "amount")))
       , ("nsfr_loan_ge1y",
           .agg .sum
-            (.filter (.binOp .ge (.col "days") (.litRat 365 1)) (.table "nsfr_loan_legs"))
+            (.filter (.binOp .ge (.col "days") (.var "one_year_days")) (.table "nsfr_loan_legs"))
             (.unOp .nonNeg (.col "amount")))
       ]
   , outputs :=
