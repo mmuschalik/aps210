@@ -19,6 +19,8 @@ def emitSExpr (tableVar? : Option String) : SExpr → String
   | .yearMonth d =>
     let ds := emitSExpr tableVar? d
     s!"({ds}.year() * 100 + {ds}.month()).cast(\"decimal(38, 12)\")"
+  | .coalesceZero e =>
+    s!"ibis.coalesce({emitSExpr tableVar? e}, ibis.literal(0, type=\"decimal(38, 12)\"))"
   | .unOp .not e => s!"(~({emitSExpr tableVar? e}))"
   | .unOp .nonNeg e => s!"ibis.greatest({emitSExpr tableVar? e}, ibis.literal(0, type=\"decimal(38, 12)\"))"
   | .unOp .abs e => s!"({emitSExpr tableVar? e}).abs()"
@@ -123,6 +125,8 @@ def emitRel : RelExpr → String
         let eStr := emitSExpr (some "t") expr
         s!"{outCol}=lambda t: ibis.coalesce({emitAggCall op eStr}.over({wStr}), {emitAggDefault op})")
     s!"({inp}).mutate({String.intercalate ", " winAssigns})"
+  | .leftJoin keyCol left right =>
+    s!"({emitRel left}).join({emitRel right}, \"{keyCol}\", how=\"left\")"
 
 /-- Emit a complete `Program` as a self-contained deterministic Python module using `ibis`. -/
 def emitProgram (prog : Program) : String :=

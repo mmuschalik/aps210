@@ -119,6 +119,7 @@ inductive SExpr where
   | litDate (y : Int) (m d : Nat)
   | dateAddMonths (d : SExpr) (months : Int)
   | yearMonth (d : SExpr)
+  | coalesceZero (e : SExpr)
   | unOp (op : UnOp) (e : SExpr)
   | binOp (op : BinOp) (l r : SExpr)
   | ite (cond thenE elseE : SExpr)
@@ -137,6 +138,7 @@ def evalSExpr (env : Row) : SExpr → Val
   | .yearMonth d =>
     let (y, m, _) := civilFromDays (evalSExpr env d).asDate
     .rat (y * 100 + (m : Int))
+  | .coalesceZero e => evalSExpr env e
   | .unOp op e =>
     let v := evalSExpr env e
     match op with
@@ -225,6 +227,7 @@ inductive RelExpr where
   | withColumns (cols : List (String × SExpr)) (input : RelExpr)
   | groupBy (keys : List String) (aggs : List (String × AggOp × SExpr)) (input : RelExpr)
   | window (cols : List (String × AggOp × SExpr × WindowSpec)) (input : RelExpr)
+  | leftJoin (keyCol : String) (left right : RelExpr)
   deriving Repr
 
 /-- Table environment mapping table names to lists of rows. -/
@@ -325,6 +328,14 @@ def evalRelWithEnv (tenv : TableEnv) (scalarEnv : Row) : RelExpr → List Row
     let rows0 := evalRelWithEnv tenv scalarEnv input
     cols.foldl (fun rs (outCol, op, expr, spec) =>
       evalWindowCol rs scalarEnv outCol op expr spec) rows0
+  | .leftJoin keyCol left right =>
+    let lrows := evalRelWithEnv tenv scalarEnv left
+    let rrows := evalRelWithEnv tenv scalarEnv right
+    lrows.map (fun lr =>
+      let lv := Row.get lr keyCol
+      match rrows.find? (fun rr => Row.get rr keyCol == lv) with
+      | some rr => lr ++ rr
+      | none => lr)
 
 /-- Denotational semantics of `RelExpr` without ambient scalar bindings. -/
 def evalRel (tenv : TableEnv) (r : RelExpr) : List Row :=

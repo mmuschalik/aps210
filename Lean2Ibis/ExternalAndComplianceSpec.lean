@@ -91,19 +91,47 @@ def complianceGateProgram : Program :=
       , ("mlh_compliant", .bool)
       , ("mlh_trigger_valid", .bool)
       , ("nsfr_compliant", .bool)
+      , ("has_level2_group", .bool)
+      , ("lcr_aud_l2_compliant", .bool)
+      , ("lcr_all_l2_compliant", .bool)
+      , ("mlh_l2_compliant", .bool)
+      , ("nsfr_l2_compliant", .bool)
+      , ("has_buffer_policy", .bool)
+      , ("buffer_policy_waived_during_stress", .bool)
+      , ("all_buffers_met", .bool)
+      , ("exclude_lcr_aud", .bool)
+      , ("exclude_lcr_all", .bool)
+      , ("exclude_mlh", .bool)
+      , ("exclude_nsfr", .bool)
+      , ("has_override_lcr_aud", .bool)
+      , ("override_lcr_aud", .rat)
+      , ("has_override_lcr_all", .bool)
+      , ("override_lcr_all", .rat)
+      , ("has_override_mlh", .bool)
+      , ("override_mlh", .rat)
+      , ("has_override_nsfr", .bool)
+      , ("override_nsfr", .rat)
       , ("offshore_subs_all_ge_100pct", .bool)
       , ("securitisation_lcr_ok", .bool) ]
     lets :=
       [ ("required_aud_lcr", .scalar
-          (.binOp .max (.litRat 100 100) (.col "apra_higher_min_lcr_aud")))
+          (.ite (.col "exclude_lcr_aud") (.litRat 0 1)
+            (.ite (.col "has_override_lcr_aud") (.col "override_lcr_aud")
+              (.binOp .max (.litRat 100 100) (.col "apra_higher_min_lcr_aud")))))
       , ("required_all_lcr", .scalar
-          (.ite (.col "is_locally_incorporated")
-            (.binOp .max (.litRat 100 100) (.col "apra_higher_min_lcr_all"))
-            (.binOp .max (.litRat 40 100) (.col "apra_higher_min_lcr_all"))))
+          (.ite (.col "exclude_lcr_all") (.litRat 0 1)
+            (.ite (.col "has_override_lcr_all") (.col "override_lcr_all")
+              (.ite (.col "is_locally_incorporated")
+                (.binOp .max (.litRat 100 100) (.col "apra_higher_min_lcr_all"))
+                (.binOp .max (.litRat 40 100) (.col "apra_higher_min_lcr_all"))))))
       , ("required_mlh", .scalar
-          (.binOp .max (.litRat 9 100) (.col "apra_higher_min_mlh")))
+          (.ite (.col "exclude_mlh") (.litRat 0 1)
+            (.ite (.col "has_override_mlh") (.col "override_mlh")
+              (.binOp .max (.litRat 9 100) (.col "apra_higher_min_mlh")))))
       , ("required_nsfr", .scalar
-          (.binOp .max (.litRat 100 100) (.col "apra_higher_min_nsfr")))
+          (.ite (.col "exclude_nsfr") (.litRat 0 1)
+            (.ite (.col "has_override_nsfr") (.col "override_nsfr")
+              (.binOp .max (.litRat 100 100) (.col "apra_higher_min_nsfr")))))
       , ("loc_ok", .scalar
           (.binOp .or (.col "is_locally_incorporated")
             (.binOp .and (.col "loc_assessed_annually") (.binOp .le (.litRat 3 1) (.col "loc_outage_min_days")))))
@@ -114,24 +142,45 @@ def complianceGateProgram : Program :=
             (.binOp .and (.col "stress_ok") (.col "loc_ok"))))
       , ("stress_breach_permitted", .scalar
           (.binOp .and (.col "in_financial_stress") (.col "notified_apra_immediately")))
+      , ("lcr_aud_ok", .scalar
+          (.binOp .or (.col "exclude_lcr_aud")
+            (.binOp .or (.unOp .not (.col "is_locally_incorporated"))
+              (.binOp .and
+                (.binOp .or (.col "lcr_aud_compliant") (.col "stress_breach_permitted"))
+                (.binOp .or (.unOp .not (.col "has_level2_group"))
+                  (.binOp .or (.col "lcr_aud_l2_compliant") (.col "stress_breach_permitted")))))))
+      , ("lcr_all_ok", .scalar
+          (.binOp .or (.col "exclude_lcr_all")
+            (.binOp .and
+              (.binOp .or (.col "lcr_all_compliant") (.col "stress_breach_permitted"))
+              (.binOp .or (.unOp .not (.col "has_level2_group"))
+                (.binOp .or (.col "lcr_all_l2_compliant") (.col "stress_breach_permitted"))))))
       , ("lcr_ok", .scalar
           (.binOp .or (.unOp .not (.col "is_lcr_adi"))
-            (.binOp .and
-              (.binOp .or (.unOp .not (.col "is_locally_incorporated"))
-                (.binOp .or (.col "lcr_aud_compliant") (.col "stress_breach_permitted")))
-              (.binOp .or (.col "lcr_all_compliant") (.col "stress_breach_permitted")))))
+            (.binOp .and (.col "lcr_aud_ok") (.col "lcr_all_ok"))))
       , ("mlh_ok", .scalar
           (.binOp .or (.col "is_lcr_adi")
-            (.binOp .and (.col "mlh_trigger_valid")
-              (.binOp .or (.col "mlh_compliant") (.col "stress_breach_permitted")))))
+            (.binOp .or (.col "exclude_mlh")
+              (.binOp .and (.col "mlh_trigger_valid")
+                (.binOp .and
+                  (.binOp .or (.col "mlh_compliant") (.col "stress_breach_permitted"))
+                  (.binOp .or (.unOp .not (.col "has_level2_group"))
+                    (.binOp .or (.col "mlh_l2_compliant") (.col "stress_breach_permitted"))))))))
       , ("nsfr_ok", .scalar
           (.binOp .or (.unOp .not (.binOp .and (.col "is_locally_incorporated") (.col "is_lcr_adi")))
-            (.col "nsfr_compliant")))
+            (.binOp .or (.col "exclude_nsfr")
+              (.binOp .and (.col "nsfr_compliant")
+                (.binOp .or (.unOp .not (.col "has_level2_group")) (.col "nsfr_l2_compliant"))))))
+      , ("buffer_policy_ok", .scalar
+          (.binOp .and (.col "has_buffer_policy")
+            (.binOp .or (.col "all_buffers_met")
+              (.binOp .and (.col "buffer_policy_waived_during_stress") (.col "stress_breach_permitted")))))
       , ("quantitative_compliant", .scalar
           (.binOp .and (.col "lcr_ok")
             (.binOp .and (.col "mlh_ok")
               (.binOp .and (.col "nsfr_ok")
-                (.binOp .and (.col "offshore_subs_all_ge_100pct") (.col "securitisation_lcr_ok"))))))
+                (.binOp .and (.col "buffer_policy_ok")
+                  (.binOp .and (.col "offshore_subs_all_ge_100pct") (.col "securitisation_lcr_ok")))))))
       , ("overall_compliant", .scalar
           (.binOp .and (.col "qualitative_compliant") (.col "quantitative_compliant"))) ]
     outputs :=

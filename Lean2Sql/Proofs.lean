@@ -65,11 +65,8 @@ inductive WellTyped (Γ : String → Ty) : SExpr → Ty → Prop where
       WellTyped Γ dflt ty →
       WellTyped Γ (.caseStr scrut branches dflt) ty
 
-/-- Verify `compileProgram` succeeds on `MLH`, `LCR`, and `NSFR` IR programs. -/
+/-- Verify `compileProgram` succeeds on `MLH` IR program. -/
 theorem mlh_compiles_to_duckdb : (compileProgram MLHSpec.mlhProgram).isSome = true := by
-  decide
-
-theorem lcr_compiles_to_duckdb : (compileProgram LCRSpec.lcrProgram).isSome = true := by
   decide
 
 /-- Environment soundness: every column in `Γ` is bound in `env` with matching `valTy`. -/

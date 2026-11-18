@@ -152,6 +152,7 @@ def main():
             has_clf_limit=True,
             recognised_clf_limit=Decimal(20),
             host_ala_in_lcr_limit=Decimal(0),
+            internal_nsfr_buffer=Decimal(0),
         ).items()
     }
     assert Decimal(nsfr_res["total_asf"]) == Decimal(125), nsfr_res
@@ -196,6 +197,7 @@ def main():
             has_clf_limit=False,
             recognised_clf_limit=Decimal(999),
             host_ala_in_lcr_limit=Decimal(0),
+            internal_nsfr_buffer=Decimal(0),
         ).items()
     }
     assert Decimal(nsfr_no_clf_res["total_rsf"]) == Decimal(56), (
@@ -249,6 +251,26 @@ def main():
             mlh_compliant=False,
             mlh_trigger_valid=False,
             nsfr_compliant=True,
+            has_level2_group=False,
+            lcr_aud_l2_compliant=False,
+            lcr_all_l2_compliant=False,
+            mlh_l2_compliant=False,
+            nsfr_l2_compliant=False,
+            has_buffer_policy=True,
+            buffer_policy_waived_during_stress=False,
+            all_buffers_met=True,
+            exclude_lcr_aud=False,
+            exclude_lcr_all=False,
+            exclude_mlh=False,
+            exclude_nsfr=False,
+            has_override_lcr_aud=False,
+            override_lcr_aud=Decimal(0),
+            has_override_lcr_all=False,
+            override_lcr_all=Decimal(0),
+            has_override_mlh=False,
+            override_mlh=Decimal(0),
+            has_override_nsfr=False,
+            override_nsfr=Decimal(0),
             offshore_subs_all_ge_100pct=True,
             securitisation_lcr_ok=True,
         ).items()

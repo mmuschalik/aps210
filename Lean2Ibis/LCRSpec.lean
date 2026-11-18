@@ -247,6 +247,19 @@ def inflowAmountExpr : SExpr :=
 def lcrProgram : Program :=
   let audFilter (tbl : RelExpr) :=
     .filter (.binOp .or (.unOp .not (.var "is_aud_only")) (.binOp .eq (.col "currency") (.litStr "AUD"))) tbl
+  let para9eRel :=
+    .withColumns [("val", hqlaValueAfterHaircutExpr)]
+      (.filter
+        (.binOp .and
+          (.binOp .eq (.col "category") (.litStr "hqla1"))
+          (.col "is_non_zero_rw_foreign_sov_in_foreign_currency"))
+        (audFilter (.table "hqla_assets")))
+  let para9eGrouped :=
+    .groupBy ["currency"] [("cur_total", .sum, .col "val")] para9eRel
+  let para9eJoined :=
+    .withColumns
+      [("capped_val", .binOp .min (.col "cur_total") (.unOp .nonNeg (.coalesceZero (.col "cap"))))]
+      (.leftJoin "currency" para9eGrouped (.table "foreign_sov_currency_caps"))
   { name := "evaluate_lcr"
     tableParams :=
       [ ("hqla_assets", ["category", "currency", "market_value", "convertible_to_cash_anytime",
@@ -254,7 +267,8 @@ def lcrProgram : Program :=
           "not_rehypothecated_if_received_in_sft", "freely_transferable_at_level2",
           "level2_transferable_cap", "is_host_recognised_ala", "issuer_restriction_satisfied",
           "recognised_by_regulator", "became_ineligible_within_30_days", "days_since_ineligible",
-          "hqla2a_diversified", "max_30d_price_decline", "max_30d_haircut_increase"])
+          "hqla2a_diversified", "max_30d_price_decline", "max_30d_haircut_increase",
+          "is_non_zero_rw_foreign_sov_in_foreign_currency"])
       , ("retail_deposits", ["currency", "balance", "guarantee_limit", "is_intermediated",
           "intermediated_look_through_met", "notice_deposit_called",
           "residual_maturity_or_notice_gt_30d", "no_withdrawal_right_or_material_penalty",
@@ -262,19 +276,28 @@ def lcrProgram : Program :=
           "host_override_rate", "is_stable", "above_guarantee_limit_or_250k",
           "is_online_account", "no_established_relationship", "is_heavily_rate_driven"])
       , ("other_outflows", ["category", "currency", "amount", "custom_rate"])
-      , ("inflows", ["category", "currency", "amount", "is_fully_performing", "counted_in_hqla"]) ]
+      , ("inflows", ["category", "currency", "amount", "is_fully_performing", "counted_in_hqla"])
+      , ("foreign_sov_currency_caps", ["currency", "cap"]) ]
     scalarParams :=
       [ ("is_aud_only", .bool), ("is_level2", .bool), ("required_min_rate", .rat)
       , ("delta_hqla1", .rat), ("delta_hqla2a", .rat), ("delta_hqla2b", .rat)
-      , ("clf_recognised", .rat), ("foreign_ho_facility_eligible", .rat) ]
+      , ("clf_recognised", .rat), ("foreign_ho_facility_eligible", .rat)
+      , ("has_apra_inflow_cap_override", .bool), ("apra_inflow_cap_override", .rat)
+      , ("internal_lcr_buffer", .rat) ]
     lets :=
-      [ ("unadj_hqla1", .aggSum
-          (.filter (.binOp .eq (.col "category") (.litStr "hqla1")) (audFilter (.table "hqla_assets")))
+      [ ("standard_hqla1", .agg .sum
+          (.filter
+            (.binOp .and
+              (.binOp .eq (.col "category") (.litStr "hqla1"))
+              (.unOp .not (.col "is_non_zero_rw_foreign_sov_in_foreign_currency")))
+            (audFilter (.table "hqla_assets")))
           hqlaValueAfterHaircutExpr)
-      , ("unadj_hqla2a", .aggSum
+      , ("capped_para9e_hqla1", .agg .sum para9eJoined (.col "capped_val"))
+      , ("unadj_hqla1", .scalar (.binOp .add (.col "standard_hqla1") (.col "capped_para9e_hqla1")))
+      , ("unadj_hqla2a", .agg .sum
           (.filter (.binOp .eq (.col "category") (.litStr "hqla2a")) (audFilter (.table "hqla_assets")))
           hqlaValueAfterHaircutExpr)
-      , ("unadj_hqla2b", .aggSum
+      , ("unadj_hqla2b", .agg .sum
           (.filter (.binOp .or (.binOp .eq (.col "category") (.litStr "hqla2b_rmbs"))
             (.binOp .or (.binOp .eq (.col "category") (.litStr "hqla2b_corporate_debt"))
               (.binOp .eq (.col "category") (.litStr "hqla2b_equity"))))
@@ -292,12 +315,15 @@ def lcrProgram : Program :=
           (.binOp .add (.col "unadj_hqla1") (.binOp .add (.col "unadj_hqla2a") (.col "unadj_hqla2b")))
           (.binOp .add (.col "excess_15") (.col "excess_40")))))
       , ("stock_of_hqla", .scalar (.binOp .add (.col "stock_ex_clf") (.unOp .nonNeg (.col "clf_recognised"))))
-      , ("retail_out", .aggSum (audFilter (.table "retail_deposits")) retailOutflowExpr)
-      , ("other_out", .aggSum (audFilter (.table "other_outflows")) table3OutflowExpr)
+      , ("retail_out", .agg .sum (audFilter (.table "retail_deposits")) retailOutflowExpr)
+      , ("other_out", .agg .sum (audFilter (.table "other_outflows")) table3OutflowExpr)
       , ("gross_outflows", .scalar (.binOp .add (.col "retail_out") (.col "other_out")))
-      , ("gross_inflows", .aggSum (audFilter (.table "inflows")) inflowAmountExpr)
-      , ("capped_inflows", .scalar (.binOp .min (.col "gross_inflows")
+      , ("gross_inflows", .agg .sum (audFilter (.table "inflows")) inflowAmountExpr)
+      , ("effective_inflow_cap", .scalar (.ite (.var "has_apra_inflow_cap_override")
+          (.binOp .min (.binOp .mul (.litRat 75 100) (.col "gross_outflows"))
+            (.unOp .nonNeg (.var "apra_inflow_cap_override")))
           (.binOp .mul (.litRat 75 100) (.col "gross_outflows"))))
+      , ("capped_inflows", .scalar (.binOp .min (.col "gross_inflows") (.col "effective_inflow_cap")))
       , ("net_cash_outflows", .scalar (.unOp .nonNeg (.binOp .sub (.col "gross_outflows") (.col "capped_inflows"))))
       , ("ho_facility_recognised", .scalar (.binOp .min (.unOp .nonNeg (.col "foreign_ho_facility_eligible"))
           (.binOp .mul (.litRat 50 100) (.binOp .mul (.col "required_min_rate") (.col "net_cash_outflows")))))
@@ -305,7 +331,11 @@ def lcrProgram : Program :=
       , ("compliant", .scalar
           (.ite (.binOp .le (.col "net_cash_outflows") (.litRat 0 1))
             (.binOp .le (.litRat 0 1) (.col "lcr_numerator"))
-            (.binOp .le (.binOp .mul (.col "required_min_rate") (.col "net_cash_outflows")) (.col "lcr_numerator")))) ]
+            (.binOp .le (.binOp .mul (.col "required_min_rate") (.col "net_cash_outflows")) (.col "lcr_numerator"))))
+      , ("buffer_met", .scalar
+          (.binOp .ge (.col "lcr_numerator")
+            (.binOp .add (.binOp .mul (.col "required_min_rate") (.col "net_cash_outflows"))
+              (.unOp .nonNeg (.col "internal_lcr_buffer"))))) ]
     outputs :=
       [ ("stock_of_hqla", .col "stock_of_hqla")
       , ("gross_outflows", .col "gross_outflows")
@@ -313,7 +343,8 @@ def lcrProgram : Program :=
       , ("net_cash_outflows", .col "net_cash_outflows")
       , ("ho_facility_recognised", .col "ho_facility_recognised")
       , ("lcr_numerator", .col "lcr_numerator")
-      , ("compliant", .col "compliant") ] }
+      , ("compliant", .col "compliant")
+      , ("buffer_met", .col "buffer_met") ] }
 
 theorem hqlaWeight_ir_equiv (c : HqlaCategory) :
     evalSExpr [("category", .str (hqlaCategoryToStr c))] hqlaWeightExpr = .rat c.weight := by

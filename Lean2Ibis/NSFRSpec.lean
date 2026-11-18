@@ -183,7 +183,8 @@ def nsfrProgram : Program :=
       [ ("required_min_rate", .rat)
       , ("gross_deriv_liabilities", .rat), ("variation_margin_posted", .rat)
       , ("gross_deriv_assets", .rat), ("eligible_cash_vm_received", .rat)
-      , ("has_clf_limit", .bool), ("recognised_clf_limit", .rat), ("host_ala_in_lcr_limit", .rat) ]
+      , ("has_clf_limit", .bool), ("recognised_clf_limit", .rat), ("host_ala_in_lcr_limit", .rat)
+      , ("internal_nsfr_buffer", .rat) ]
     lets :=
       [ ("total_asf", .aggSum (.table "asf_items")
           (.binOp .mul (.unOp .nonNeg (.col "carrying_value")) asfFactorExpr))
@@ -214,14 +215,19 @@ def nsfrProgram : Program :=
       , ("compliant", .scalar
           (.ite (.binOp .le (.col "total_rsf") (.litRat 0 1))
             (.binOp .le (.litRat 0 1) (.col "total_asf"))
-            (.binOp .le (.binOp .mul (.col "required_min_rate") (.col "total_rsf")) (.col "total_asf")))) ]
+            (.binOp .le (.binOp .mul (.col "required_min_rate") (.col "total_rsf")) (.col "total_asf"))))
+      , ("buffer_met", .scalar
+          (.binOp .ge (.col "total_asf")
+            (.binOp .add (.binOp .mul (.col "required_min_rate") (.col "total_rsf"))
+              (.unOp .nonNeg (.col "internal_nsfr_buffer"))))) ]
     outputs :=
       [ ("total_asf", .col "total_asf")
       , ("total_rsf", .col "total_rsf")
       , ("net_deriv_rsf", .col "net_deriv_rsf")
       , ("deriv_addon_rsf", .col "deriv_addon_rsf")
       , ("obs_rsf", .col "obs_rsf")
-      , ("compliant", .col "compliant") ] }
+      , ("compliant", .col "compliant")
+      , ("buffer_met", .col "buffer_met") ] }
 
 theorem obsFactor_ir_equiv (c : ObsExposureCategory) :
     evalSExpr [("category", .str (obsCategoryToStr c))] obsFactorExpr = .rat c.factor := by

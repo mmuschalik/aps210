@@ -24,6 +24,26 @@ def evaluate_compliance_gate(
     mlh_compliant,
     mlh_trigger_valid,
     nsfr_compliant,
+    has_level2_group,
+    lcr_aud_l2_compliant,
+    lcr_all_l2_compliant,
+    mlh_l2_compliant,
+    nsfr_l2_compliant,
+    has_buffer_policy,
+    buffer_policy_waived_during_stress,
+    all_buffers_met,
+    exclude_lcr_aud,
+    exclude_lcr_all,
+    exclude_mlh,
+    exclude_nsfr,
+    has_override_lcr_aud,
+    override_lcr_aud,
+    has_override_lcr_all,
+    override_lcr_all,
+    has_override_mlh,
+    override_mlh,
+    has_override_nsfr,
+    override_nsfr,
     offshore_subs_all_ge_100pct,
     securitisation_lcr_ok,
 ):
@@ -54,45 +74,103 @@ def evaluate_compliance_gate(
     mlh_compliant = ibis.literal(bool(mlh_compliant))
     mlh_trigger_valid = ibis.literal(bool(mlh_trigger_valid))
     nsfr_compliant = ibis.literal(bool(nsfr_compliant))
+    has_level2_group = ibis.literal(bool(has_level2_group))
+    lcr_aud_l2_compliant = ibis.literal(bool(lcr_aud_l2_compliant))
+    lcr_all_l2_compliant = ibis.literal(bool(lcr_all_l2_compliant))
+    mlh_l2_compliant = ibis.literal(bool(mlh_l2_compliant))
+    nsfr_l2_compliant = ibis.literal(bool(nsfr_l2_compliant))
+    has_buffer_policy = ibis.literal(bool(has_buffer_policy))
+    buffer_policy_waived_during_stress = ibis.literal(
+        bool(buffer_policy_waived_during_stress)
+    )
+    all_buffers_met = ibis.literal(bool(all_buffers_met))
+    exclude_lcr_aud = ibis.literal(bool(exclude_lcr_aud))
+    exclude_lcr_all = ibis.literal(bool(exclude_lcr_all))
+    exclude_mlh = ibis.literal(bool(exclude_mlh))
+    exclude_nsfr = ibis.literal(bool(exclude_nsfr))
+    has_override_lcr_aud = ibis.literal(bool(has_override_lcr_aud))
+    override_lcr_aud = ibis.literal(
+        Decimal(str(override_lcr_aud)), type="decimal(38, 12)"
+    )
+    has_override_lcr_all = ibis.literal(bool(has_override_lcr_all))
+    override_lcr_all = ibis.literal(
+        Decimal(str(override_lcr_all)), type="decimal(38, 12)"
+    )
+    has_override_mlh = ibis.literal(bool(has_override_mlh))
+    override_mlh = ibis.literal(Decimal(str(override_mlh)), type="decimal(38, 12)")
+    has_override_nsfr = ibis.literal(bool(has_override_nsfr))
+    override_nsfr = ibis.literal(Decimal(str(override_nsfr)), type="decimal(38, 12)")
     offshore_subs_all_ge_100pct = ibis.literal(bool(offshore_subs_all_ge_100pct))
     securitisation_lcr_ok = ibis.literal(bool(securitisation_lcr_ok))
-    required_aud_lcr = ibis.greatest(
-        (
-            ibis.literal(100, type="decimal(38, 12)")
-            / ibis.literal(100, type="decimal(38, 12)")
+    required_aud_lcr = ibis.ifelse(
+        exclude_lcr_aud,
+        ibis.literal(0, type="decimal(38, 12)"),
+        ibis.ifelse(
+            has_override_lcr_aud,
+            override_lcr_aud,
+            ibis.greatest(
+                (
+                    ibis.literal(100, type="decimal(38, 12)")
+                    / ibis.literal(100, type="decimal(38, 12)")
+                ),
+                apra_higher_min_lcr_aud,
+            ),
         ),
-        apra_higher_min_lcr_aud,
     )
     required_all_lcr = ibis.ifelse(
-        is_locally_incorporated,
-        ibis.greatest(
-            (
-                ibis.literal(100, type="decimal(38, 12)")
-                / ibis.literal(100, type="decimal(38, 12)")
+        exclude_lcr_all,
+        ibis.literal(0, type="decimal(38, 12)"),
+        ibis.ifelse(
+            has_override_lcr_all,
+            override_lcr_all,
+            ibis.ifelse(
+                is_locally_incorporated,
+                ibis.greatest(
+                    (
+                        ibis.literal(100, type="decimal(38, 12)")
+                        / ibis.literal(100, type="decimal(38, 12)")
+                    ),
+                    apra_higher_min_lcr_all,
+                ),
+                ibis.greatest(
+                    (
+                        ibis.literal(40, type="decimal(38, 12)")
+                        / ibis.literal(100, type="decimal(38, 12)")
+                    ),
+                    apra_higher_min_lcr_all,
+                ),
             ),
-            apra_higher_min_lcr_all,
-        ),
-        ibis.greatest(
-            (
-                ibis.literal(40, type="decimal(38, 12)")
-                / ibis.literal(100, type="decimal(38, 12)")
-            ),
-            apra_higher_min_lcr_all,
         ),
     )
-    required_mlh = ibis.greatest(
-        (
-            ibis.literal(9, type="decimal(38, 12)")
-            / ibis.literal(100, type="decimal(38, 12)")
+    required_mlh = ibis.ifelse(
+        exclude_mlh,
+        ibis.literal(0, type="decimal(38, 12)"),
+        ibis.ifelse(
+            has_override_mlh,
+            override_mlh,
+            ibis.greatest(
+                (
+                    ibis.literal(9, type="decimal(38, 12)")
+                    / ibis.literal(100, type="decimal(38, 12)")
+                ),
+                apra_higher_min_mlh,
+            ),
         ),
-        apra_higher_min_mlh,
     )
-    required_nsfr = ibis.greatest(
-        (
-            ibis.literal(100, type="decimal(38, 12)")
-            / ibis.literal(100, type="decimal(38, 12)")
+    required_nsfr = ibis.ifelse(
+        exclude_nsfr,
+        ibis.literal(0, type="decimal(38, 12)"),
+        ibis.ifelse(
+            has_override_nsfr,
+            override_nsfr,
+            ibis.greatest(
+                (
+                    ibis.literal(100, type="decimal(38, 12)")
+                    / ibis.literal(100, type="decimal(38, 12)")
+                ),
+                apra_higher_min_nsfr,
+            ),
         ),
-        apra_higher_min_nsfr,
     )
     loc_ok = is_locally_incorporated | (
         loc_assessed_annually
@@ -101,16 +179,40 @@ def evaluate_compliance_gate(
     stress_ok = (~(is_lcr_adi)) | stress_testing_ok
     qualitative_compliant = base_governance_ok & (stress_ok & loc_ok)
     stress_breach_permitted = in_financial_stress & notified_apra_immediately
-    lcr_ok = (~(is_lcr_adi)) | (
-        ((~(is_locally_incorporated)) | (lcr_aud_compliant | stress_breach_permitted))
-        & (lcr_all_compliant | stress_breach_permitted)
+    lcr_aud_ok = exclude_lcr_aud | (
+        (~(is_locally_incorporated))
+        | (
+            (lcr_aud_compliant | stress_breach_permitted)
+            & ((~(has_level2_group)) | (lcr_aud_l2_compliant | stress_breach_permitted))
+        )
     )
+    lcr_all_ok = exclude_lcr_all | (
+        (lcr_all_compliant | stress_breach_permitted)
+        & ((~(has_level2_group)) | (lcr_all_l2_compliant | stress_breach_permitted))
+    )
+    lcr_ok = (~(is_lcr_adi)) | (lcr_aud_ok & lcr_all_ok)
     mlh_ok = is_lcr_adi | (
-        mlh_trigger_valid & (mlh_compliant | stress_breach_permitted)
+        exclude_mlh
+        | (
+            mlh_trigger_valid
+            & (
+                (mlh_compliant | stress_breach_permitted)
+                & ((~(has_level2_group)) | (mlh_l2_compliant | stress_breach_permitted))
+            )
+        )
     )
-    nsfr_ok = (~(is_locally_incorporated & is_lcr_adi)) | nsfr_compliant
+    nsfr_ok = (~(is_locally_incorporated & is_lcr_adi)) | (
+        exclude_nsfr | (nsfr_compliant & ((~(has_level2_group)) | nsfr_l2_compliant))
+    )
+    buffer_policy_ok = has_buffer_policy & (
+        all_buffers_met | (buffer_policy_waived_during_stress & stress_breach_permitted)
+    )
     quantitative_compliant = lcr_ok & (
-        mlh_ok & (nsfr_ok & (offshore_subs_all_ge_100pct & securitisation_lcr_ok))
+        mlh_ok
+        & (
+            nsfr_ok
+            & (buffer_policy_ok & (offshore_subs_all_ge_100pct & securitisation_lcr_ok))
+        )
     )
     overall_compliant = qualitative_compliant & quantitative_compliant
     return {

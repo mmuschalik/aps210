@@ -185,6 +185,7 @@ def compileSExpr : SExpr → SqlExpr
   | .litDate y m d => .litNum (daysFromCivil y m d) 1
   | .dateAddMonths d m => .bin .add (compileSExpr d) (.litNum (m * 30) 1)
   | .yearMonth d => compileSExpr d
+  | .coalesceZero e => .coalesceZero (compileSExpr e)
   | .unOp .not e => .not (compileSExpr e)
   | .unOp .nonNeg e => .greatestZero (compileSExpr e)
   | .unOp .abs e =>
@@ -220,6 +221,7 @@ def compileRelToWhere : RelExpr → Option (String × Option SqlExpr)
   | .withColumns _ _ => none
   | .groupBy _ _ _ => none
   | .window _ _ => none
+  | .leftJoin _ _ _ => none
 
 def compileProgram (prog : Program) : Option SqlProgram := do
   let lets ← prog.lets.mapM (fun (varName, rhs) =>

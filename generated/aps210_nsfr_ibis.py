@@ -18,6 +18,7 @@ def evaluate_nsfr(
     has_clf_limit,
     recognised_clf_limit,
     host_ala_in_lcr_limit,
+    internal_nsfr_buffer,
 ):
     required_min_rate = ibis.literal(
         Decimal(str(required_min_rate)), type="decimal(38, 12)"
@@ -40,6 +41,9 @@ def evaluate_nsfr(
     )
     host_ala_in_lcr_limit = ibis.literal(
         Decimal(str(host_ala_in_lcr_limit)), type="decimal(38, 12)"
+    )
+    internal_nsfr_buffer = ibis.literal(
+        Decimal(str(internal_nsfr_buffer)), type="decimal(38, 12)"
     )
     total_asf = ibis.coalesce(
         (asf_items)
@@ -6238,6 +6242,10 @@ def evaluate_nsfr(
         (ibis.literal(0, type="decimal(38, 12)") <= total_asf),
         ((required_min_rate * total_rsf) <= total_asf),
     )
+    buffer_met = total_asf >= (
+        (required_min_rate * total_rsf)
+        + ibis.greatest(internal_nsfr_buffer, ibis.literal(0, type="decimal(38, 12)"))
+    )
     return {
         "total_asf": total_asf,
         "total_rsf": total_rsf,
@@ -6245,4 +6253,5 @@ def evaluate_nsfr(
         "deriv_addon_rsf": deriv_addon_rsf,
         "obs_rsf": obs_rsf,
         "compliant": compliant,
+        "buffer_met": buffer_met,
     }

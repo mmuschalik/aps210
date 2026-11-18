@@ -25,6 +25,14 @@ HQLA_SCHEMA = ibis.schema(
         "hqla2a_diversified": "boolean",
         "max_30d_price_decline": "decimal(38, 12)",
         "max_30d_haircut_increase": "decimal(38, 12)",
+        "is_non_zero_rw_foreign_sov_in_foreign_currency": "boolean",
+    }
+)
+
+FOREIGN_CAP_SCHEMA = ibis.schema(
+    {
+        "currency": "string",
+        "cap": "decimal(38, 12)",
     }
 )
 
@@ -69,10 +77,14 @@ INFLOW_SCHEMA = ibis.schema(
 )
 
 
-def make_tables(con, hqla, retail, outflows, inflows):
+def make_tables(con, hqla, retail, outflows, inflows, caps=None):
+    hqla_rows = [
+        row + (False,) if len(row) == len(HQLA_SCHEMA.names) - 1 else row
+        for row in hqla
+    ]
     return (
         ibis.memtable(
-            pd.DataFrame(hqla, columns=list(HQLA_SCHEMA.names)), schema=HQLA_SCHEMA
+            pd.DataFrame(hqla_rows, columns=list(HQLA_SCHEMA.names)), schema=HQLA_SCHEMA
         ),
         ibis.memtable(
             pd.DataFrame(retail, columns=list(RETAIL_SCHEMA.names)),
@@ -86,6 +98,10 @@ def make_tables(con, hqla, retail, outflows, inflows):
             pd.DataFrame(inflows, columns=list(INFLOW_SCHEMA.names)),
             schema=INFLOW_SCHEMA,
         ),
+        ibis.memtable(
+            pd.DataFrame(caps or [], columns=list(FOREIGN_CAP_SCHEMA.names)),
+            schema=FOREIGN_CAP_SCHEMA,
+        ),
     )
 
 
@@ -93,7 +109,7 @@ def main():
     con = ibis.duckdb.connect()
 
     # Case 1: Foreign ADI 40% min LCR + 50% Head Office Facility (matches APS210/Tests.lean #5)
-    hqla, retail, outf, inf = make_tables(
+    hqla, retail, outf, inf, caps = make_tables(
         con,
         hqla=[
             (
@@ -128,6 +144,7 @@ def main():
             retail,
             outf,
             inf,
+            caps,
             is_aud_only=False,
             is_level2=False,
             required_min_rate=Decimal("0.40"),
@@ -136,6 +153,9 @@ def main():
             delta_hqla2b=Decimal(0),
             clf_recognised=Decimal(0),
             foreign_ho_facility_eligible=Decimal(30),
+            has_apra_inflow_cap_override=False,
+            apra_inflow_cap_override=Decimal(0),
+            internal_lcr_buffer=Decimal(0),
         ).items()
     }
     assert Decimal(res1["ho_facility_recognised"]) == Decimal(20), res1
@@ -144,7 +164,7 @@ def main():
     print("PASS lcr_foreign_adi_ho_facility:", res1)
 
     # Case 2: AUD-only filter + Retail Scorecard (Tables 1 & 2) + 75% Inflow Cap + HQLA2A Haircut
-    hqla2, retail2, outf2, inf2 = make_tables(
+    hqla2, retail2, outf2, inf2, caps2 = make_tables(
         con,
         hqla=[
             (
@@ -269,6 +289,7 @@ def main():
             retail2,
             outf2,
             inf2,
+            caps2,
             is_aud_only=True,
             is_level2=False,
             required_min_rate=Decimal("1.00"),
@@ -277,6 +298,9 @@ def main():
             delta_hqla2b=Decimal(0),
             clf_recognised=Decimal(0),
             foreign_ho_facility_eligible=Decimal(0),
+            has_apra_inflow_cap_override=False,
+            apra_inflow_cap_override=Decimal(0),
+            internal_lcr_buffer=Decimal(0),
         ).items()
     }
     # Stock = 50 + 17 = 67; Gross outflows = 60; Capped inflows = 45; Net outflows = 15; 67 >= 15 -> compliant
@@ -289,7 +313,7 @@ def main():
 
     # Case 3: $500k stable deposit split at $250k FCS limit ($250k*5% + $250k*10% = $37,500)
     #         + Level 2 non-transferable HQLA capped at level2_transferable_cap
-    hqla3, retail3, outf3, inf3 = make_tables(
+    hqla3, retail3, outf3, inf3, caps3 = make_tables(
         con,
         hqla=[
             (
@@ -343,6 +367,7 @@ def main():
             retail3,
             outf3,
             inf3,
+            caps3,
             is_aud_only=False,
             is_level2=True,
             required_min_rate=Decimal("1.00"),
@@ -351,6 +376,9 @@ def main():
             delta_hqla2b=Decimal(0),
             clf_recognised=Decimal(0),
             foreign_ho_facility_eligible=Decimal(0),
+            has_apra_inflow_cap_override=False,
+            apra_inflow_cap_override=Decimal(0),
+            internal_lcr_buffer=Decimal(0),
         ).items()
     }
     assert Decimal(res3["stock_of_hqla"]) == Decimal(40000), res3
@@ -359,7 +387,7 @@ def main():
     print("PASS lcr_500k_fcs_split_and_l2_cap:", res3)
 
     # Case 4: Called intermediated notice deposit with failed look-through -> $100 outflow (not $0)
-    hqla4, retail4, outf4, inf4 = make_tables(
+    hqla4, retail4, outf4, inf4, caps4 = make_tables(
         con,
         hqla=[],
         retail=[
@@ -392,6 +420,7 @@ def main():
             retail4,
             outf4,
             inf4,
+            caps4,
             is_aud_only=False,
             is_level2=False,
             required_min_rate=Decimal("1.00"),
@@ -400,10 +429,91 @@ def main():
             delta_hqla2b=Decimal(0),
             clf_recognised=Decimal(0),
             foreign_ho_facility_eligible=Decimal(0),
+            has_apra_inflow_cap_override=False,
+            apra_inflow_cap_override=Decimal(0),
+            internal_lcr_buffer=Decimal(0),
         ).items()
     }
     assert Decimal(res4["gross_outflows"]) == Decimal(100), res4
     print("PASS lcr_called_intermediated_deposit:", res4)
+
+    # Case 5: APRA stricter inflow cap override (20%) + Para 9(e) foreign-sov HQLA1 currency cap
+    hqla5, retail5, outf5, inf5, caps5 = make_tables(
+        con,
+        hqla=[
+            (
+                "hqla1",
+                "USD",
+                Decimal(120),
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                Decimal(0),
+                False,
+                True,
+                True,
+                False,
+                Decimal(0),
+                True,
+                Decimal(0),
+                Decimal(0),
+                True,  # Para 9(e)
+            ),
+            (
+                "hqla1",
+                "EUR",
+                Decimal(50),
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                Decimal(0),
+                False,
+                True,
+                True,
+                False,
+                Decimal(0),
+                True,
+                Decimal(0),
+                Decimal(0),
+                True,  # absent from caps -> capped at 0
+            ),
+        ],
+        retail=[],
+        outflows=[("non_op_other", "AUD", Decimal(100), Decimal(0))],
+        inflows=[("fi_and_central_bank", "AUD", Decimal(100), True, False)],
+        caps=[("USD", Decimal(60))],
+    )
+    res5 = {
+        k: con.execute(v)
+        for k, v in evaluate_lcr(
+            hqla5,
+            retail5,
+            outf5,
+            inf5,
+            caps5,
+            is_aud_only=False,
+            is_level2=False,
+            required_min_rate=Decimal("1.00"),
+            delta_hqla1=Decimal(0),
+            delta_hqla2a=Decimal(0),
+            delta_hqla2b=Decimal(0),
+            clf_recognised=Decimal(0),
+            foreign_ho_facility_eligible=Decimal(0),
+            has_apra_inflow_cap_override=True,
+            apra_inflow_cap_override=Decimal(20),
+            internal_lcr_buffer=Decimal(0),
+        ).items()
+    }
+    assert Decimal(res5["stock_of_hqla"]) == Decimal(60), res5
+    assert Decimal(res5["capped_inflows"]) == Decimal(20), res5
+    assert Decimal(res5["net_cash_outflows"]) == Decimal(80), res5
+    print("PASS lcr_apra_inflow_cap_and_para9e:", res5)
 
 
 if __name__ == "__main__":
