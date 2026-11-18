@@ -329,11 +329,11 @@ structure NsfrDerivativeInput where
   cashVmReceivedEligibility : Option External.CashVariationMarginEligibility := none
   deriving DecidableEq, Repr
 
-private def NsfrDerivativeInput.effectiveGrossAssets (d : NsfrDerivativeInput) : Money :=
+def NsfrDerivativeInput.effectiveGrossAssets (d : NsfrDerivativeInput) : Money :=
   if d.contracts.isEmpty then nonNeg d.grossDerivativeAssets
   else (computeNettedDerivativeTotals d.contracts).1
 
-private def NsfrDerivativeInput.effectiveGrossLiabilities (d : NsfrDerivativeInput) : Money :=
+def NsfrDerivativeInput.effectiveGrossLiabilities (d : NsfrDerivativeInput) : Money :=
   if d.contracts.isEmpty then nonNeg d.grossDerivativeLiabilities
   else (computeNettedDerivativeTotals d.contracts).2
 
@@ -386,7 +386,7 @@ structure NsfrResult where
   bufferMet : Bool
   deriving DecidableEq, Repr
 
-private def insertByFallbackDesc
+def insertByFallbackDesc
     (defaultFallback : Rate) (x : RsfAssetItem) : List RsfAssetItem → List RsfAssetItem
   | [] => [x]
   | y :: ys =>
@@ -394,10 +394,10 @@ private def insertByFallbackDesc
     let fy := nonNeg (y.excessClfFallbackFactor.getD defaultFallback)
     if fx >= fy then x :: y :: ys else y :: insertByFallbackDesc defaultFallback x ys
 
-private def sortByFallbackDesc (defaultFallback : Rate) (items : List RsfAssetItem) : List RsfAssetItem :=
+def sortByFallbackDesc (defaultFallback : Rate) (items : List RsfAssetItem) : List RsfAssetItem :=
   items.foldr (insertByFallbackDesc defaultFallback) []
 
-private def foldClfBucketRsf
+def foldClfBucketRsf
     (items : List RsfAssetItem)
     (initLimit : Money)
     (defaultFallback : Rate) : Money × Money :=
