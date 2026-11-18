@@ -218,9 +218,9 @@ def main():
             internal_nsfr_buffer=Decimal(0),
         ).items()
     }
-    assert Decimal(nsfr_no_clf_res["total_rsf"]) == Decimal(56), (
+    assert Decimal(nsfr_no_clf_res["total_rsf"]) == Decimal(91), (
         nsfr_no_clf_res
-    )  # 50 + 6 obs
+    )  # 85 (para 36(c) conservative fallback) + 6 obs
     print("PASS nsfr_missing_clf_limit_uses_zero:", nsfr_no_clf_res)
 
     # 1c. NSFR contract-level precedence + mixed netting-set eligibility

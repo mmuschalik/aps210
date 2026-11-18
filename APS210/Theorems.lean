@@ -56,7 +56,7 @@ theorem lessStableRunoff_cases (score : Nat) :
     have hnot : ¬ (score ≤ 2) := Nat.not_le_of_gt h
     simp [lessStableRunoffRate, hnot]
 
-/-- Attachment A, Paragraph 35 & Table 4: Short-position-covering collateral always yields 0% inflow. -/
+/-- Attachment A, Paragraph 56 & Table 4: Short-position-covering collateral always yields 0% inflow. -/
 theorem shortPosition_zero_inflow (c : SecuredLendingCollateral) :
     securedLendingInflowRate c true = 0 := by
   have hpct0 : pct 0 = 0 := by native_decide
@@ -89,14 +89,14 @@ theorem netCashOutflows_nonneg (totalOutflows : Money) (inflows : List InflowIte
   simp only [computeNetCashOutflows, nonNeg]
   exact rat_le_max_right _ _
 
-/-- Attachment A, Paragraph 55(a)–(b): Minimum All-Currencies LCR is 100% for locally incorporated
+/-- Main Body, Paragraph 55(a)–(b): Minimum All-Currencies LCR is 100% for locally incorporated
     LCR ADIs and 40% for foreign LCR ADIs (when no higher APRA minimum is set). -/
 theorem default_lcr_minimums :
     ({ incorporation := .locallyIncorporated, classification := .lcr } : Governance.AdiProfile).requiredAllCurrenciesLcr = some (pct 100) ∧
     ({ incorporation := .foreign, classification := .lcr } : Governance.AdiProfile).requiredAllCurrenciesLcr = some (pct 40) := by
   native_decide
 
-/-- Attachment A, Paragraph 59: Foreign ADIs and MLH ADIs have no NSFR requirement. -/
+/-- Main Body, Paragraph 59: Foreign ADIs and MLH ADIs have no NSFR requirement. -/
 theorem nsfr_only_local_lcr :
     ({ incorporation := .foreign, classification := .lcr } : Governance.AdiProfile).requiredNsfr = none ∧
     ({ incorporation := .locallyIncorporated, classification := .mlh } : Governance.AdiProfile).requiredNsfr = none := by
@@ -241,29 +241,50 @@ theorem hqla_cap40_bound (u1 u2a u2b : Money) (uw : HqlaUnwindAdjustments) :
 theorem clf_recognised_bounds (clf : ClfInput) :
     0 ≤ clf.recognisedAmount ∧
     clf.recognisedAmount ≤ nonNeg clf.contractualAmount ∧
-    clf.recognisedAmount ≤ nonNeg clf.collateralHeldAfterRbaMargins ∧
+    clf.recognisedAmount ≤
+      nonNeg clf.collateralHeldAfterRbaMargins + nonNeg clf.recentlyIneligibleCollateralAfterRbaMargins ∧
     (clf.approvedByApra = false → clf.recognisedAmount = 0) := by
   simp only [ClfInput.recognisedAmount]
   cases h : clf.approvedByApra
-  · refine ⟨Rat.le_refl, rat_le_max_right _ _, rat_le_max_right _ _, fun _ => rfl⟩
+  · have hnn_col : 0 ≤ nonNeg clf.collateralHeldAfterRbaMargins + nonNeg clf.recentlyIneligibleCollateralAfterRbaMargins :=
+      Rat.add_nonneg (rat_le_max_right _ _) (rat_le_max_right _ _)
+    refine ⟨Rat.le_refl, rat_le_max_right _ _, hnn_col, fun _ => rfl⟩
   · simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte]
     cases hp : clf.processEligible
-    · refine ⟨Rat.le_refl, rat_le_max_right _ _, rat_le_max_right _ _, fun hfalse => Bool.noConfusion hfalse⟩
+    · have hnn_col : 0 ≤ nonNeg clf.collateralHeldAfterRbaMargins + nonNeg clf.recentlyIneligibleCollateralAfterRbaMargins :=
+        Rat.add_nonneg (rat_le_max_right _ _) (rat_le_max_right _ _)
+      refine ⟨Rat.le_refl, rat_le_max_right _ _, hnn_col, fun hfalse => Bool.noConfusion hfalse⟩
     · simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+      let graceOk := clf.collateralBecameIneligibleWithin30Days && match clf.collateralDaysSinceIneligible with
+        | some d => decide (d ≤ 30)
+        | none => true
+      let c := nonNeg clf.collateralHeldAfterRbaMargins +
+        (if graceOk = true then nonNeg clf.recentlyIneligibleCollateralAfterRbaMargins else 0)
       have ha : 0 ≤ nonNeg clf.contractualAmount := rat_le_max_right _ _
       have hb : 0 ≤ nonNeg (clf.contractualAmount - nonNeg clf.pledgedUnderZeroRunoffSecFunding + nonNeg clf.receivedUnderZeroInflowSecLending) :=
         rat_le_max_right _ _
-      have hc : 0 ≤ nonNeg clf.collateralHeldAfterRbaMargins := rat_le_max_right _ _
-      have hmin_bc_nonneg : 0 ≤ min (nonNeg (clf.contractualAmount - nonNeg clf.pledgedUnderZeroRunoffSecFunding + nonNeg clf.receivedUnderZeroInflowSecLending)) (nonNeg clf.collateralHeldAfterRbaMargins) := by
+      have hc_grace : 0 ≤ (if graceOk = true then nonNeg clf.recentlyIneligibleCollateralAfterRbaMargins else 0) := by
+        split
+        · exact rat_le_max_right _ _
+        · exact Rat.le_refl
+      have hc : 0 ≤ c := Rat.add_nonneg (rat_le_max_right _ _) hc_grace
+      have hmin_bc_nonneg : 0 ≤ min (nonNeg (clf.contractualAmount - nonNeg clf.pledgedUnderZeroRunoffSecFunding + nonNeg clf.receivedUnderZeroInflowSecLending)) c := by
         change 0 ≤ (if _ ≤ _ then _ else _)
         split <;> assumption
-      have hmin_abc_nonneg : 0 ≤ min (nonNeg clf.contractualAmount) (min (nonNeg (clf.contractualAmount - nonNeg clf.pledgedUnderZeroRunoffSecFunding + nonNeg clf.receivedUnderZeroInflowSecLending)) (nonNeg clf.collateralHeldAfterRbaMargins)) := by
+      have hmin_abc_nonneg : 0 ≤ min (nonNeg clf.contractualAmount) (min (nonNeg (clf.contractualAmount - nonNeg clf.pledgedUnderZeroRunoffSecFunding + nonNeg clf.receivedUnderZeroInflowSecLending)) c) := by
         change 0 ≤ (if _ ≤ _ then _ else _)
         split <;> assumption
-      have hle_a : min (nonNeg clf.contractualAmount) (min (nonNeg (clf.contractualAmount - nonNeg clf.pledgedUnderZeroRunoffSecFunding + nonNeg clf.receivedUnderZeroInflowSecLending)) (nonNeg clf.collateralHeldAfterRbaMargins)) ≤ nonNeg clf.contractualAmount :=
+      have hle_a : min (nonNeg clf.contractualAmount) (min (nonNeg (clf.contractualAmount - nonNeg clf.pledgedUnderZeroRunoffSecFunding + nonNeg clf.receivedUnderZeroInflowSecLending)) c) ≤ nonNeg clf.contractualAmount :=
         rat_min_le_left _ _
-      have hle_c : min (nonNeg clf.contractualAmount) (min (nonNeg (clf.contractualAmount - nonNeg clf.pledgedUnderZeroRunoffSecFunding + nonNeg clf.receivedUnderZeroInflowSecLending)) (nonNeg clf.collateralHeldAfterRbaMargins)) ≤ nonNeg clf.collateralHeldAfterRbaMargins :=
-        Rat.le_trans (rat_min_le_right _ _) (rat_min_le_right _ _)
+      have hc_le : c ≤ nonNeg clf.collateralHeldAfterRbaMargins + nonNeg clf.recentlyIneligibleCollateralAfterRbaMargins := by
+        dsimp only [c]
+        rw [Rat.add_le_add_left]
+        split
+        · exact Rat.le_refl
+        · exact rat_le_max_right _ _
+      have hle_c : min (nonNeg clf.contractualAmount) (min (nonNeg (clf.contractualAmount - nonNeg clf.pledgedUnderZeroRunoffSecFunding + nonNeg clf.receivedUnderZeroInflowSecLending)) c) ≤
+          nonNeg clf.collateralHeldAfterRbaMargins + nonNeg clf.recentlyIneligibleCollateralAfterRbaMargins :=
+        Rat.le_trans (Rat.le_trans (rat_min_le_right _ _) (rat_min_le_right _ _)) hc_le
       exact ⟨hmin_abc_nonneg, hle_a, hle_c, fun hfalse => Bool.noConfusion hfalse⟩
 
 /-- Table 2 (Attachment A, para 40): Higher scorecard risk never reduces the less-stable run-off rate. -/
@@ -393,7 +414,7 @@ theorem nsfr_netDerivativeRsf_nonneg (d : NsfrDerivativeInput) :
 -- Universal Regulatory Condition, Upstream & Monotonicity Invariants
 -- ============================================================================
 
-/-- Attachment A, Paragraphs 16–21 & 25: If any CLF process/operational/diversification/grace
+/-- Attachment A, Paragraphs 16–21: If any CLF process/operational/diversification
     condition fails (`processEligible = false`), recognised CLF is 0. -/
 theorem clf_processEligible_false_recognised_zero (clf : ClfInput)
     (h : clf.processEligible = false) :

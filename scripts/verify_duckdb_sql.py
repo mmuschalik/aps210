@@ -21,10 +21,12 @@ def main():
                     True,
                     True,
                     True,
+                    True,
                 ),
                 (
                     "net_deposits_with_other_adis_two_business_days",
                     Decimal(5),
+                    True,
                     True,
                     True,
                     True,
@@ -39,6 +41,7 @@ def main():
                     True,
                     True,
                     True,
+                    True,
                 ),
             ],
             columns=[
@@ -47,6 +50,7 @@ def main():
                 "unencumbered_or_apra_approved",
                 "rba_repo_eligible",
                 "non_subordinated",
+                "is_debt_security",
                 "liquidatable_within_two_business_days",
                 "liquidation_days_ok",
             ],

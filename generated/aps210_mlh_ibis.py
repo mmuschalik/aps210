@@ -62,7 +62,7 @@ def evaluate_mlh(
                                             (
                                                 t["category"]
                                                 == "apra_approved_other_securities",
-                                                ibis.literal(True),
+                                                t["is_debt_security"],
                                             ),
                                             (
                                                 t["category"]
@@ -138,7 +138,7 @@ def evaluate_mlh(
                                             (
                                                 t["category"]
                                                 == "apra_approved_other_securities",
-                                                ibis.literal(True),
+                                                t["is_debt_security"],
                                             ),
                                             (
                                                 t["category"]

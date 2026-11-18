@@ -123,6 +123,10 @@ private def parseClf (j : Json) : Except String ClfSummaryInput := do
     , pledgedZeroRunoff := ← parseRat (← getField j "pledged_zero_runoff")
     , receivedZeroInflow := ← parseRat (← getField j "received_zero_inflow")
     , collateralAfterMargin := ← parseRat (← getField j "collateral_after_margin")
+    , recentlyIneligibleCollateralAfterMargin :=
+        match getField j "recently_ineligible_collateral_after_margin" with
+        | .ok v => ← parseRat v
+        | .error _ => 0
     , collateralDiversified := ← (← getField j "collateral_diversified").getBool?
     , annualReapprovalCurrent := ← (← getField j "annual_reapproval_current").getBool?
     , includedInFundingStrategy := ← (← getField j "included_in_funding_strategy").getBool?

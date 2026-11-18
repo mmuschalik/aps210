@@ -23,6 +23,7 @@ def evaluate_aps210_upstream(
     clf_pledged_zero_runoff,
     clf_received_zero_inflow,
     clf_collateral_after_margin,
+    clf_recently_ineligible_collateral_after_margin,
     clf_collateral_diversified,
     clf_annual_reapproval_current,
     clf_included_in_funding_strategy,
@@ -46,6 +47,10 @@ def evaluate_aps210_upstream(
     )
     clf_collateral_after_margin = ibis.literal(
         Decimal(str(clf_collateral_after_margin)), type="decimal(38, 12)"
+    )
+    clf_recently_ineligible_collateral_after_margin = ibis.literal(
+        Decimal(str(clf_recently_ineligible_collateral_after_margin)),
+        type="decimal(38, 12)",
     )
     clf_collateral_diversified = ibis.literal(bool(clf_collateral_diversified))
     clf_annual_reapproval_current = ibis.literal(bool(clf_annual_reapproval_current))
@@ -1500,25 +1505,16 @@ def evaluate_aps210_upstream(
         (
             clf_approved_by_apra
             & (
-                (
-                    (~(clf_collateral_became_ineligible_30d))
-                    | (
-                        clf_collateral_days_since_ineligible
-                        <= ibis.literal(30, type="decimal(38, 12)")
-                    )
-                )
+                clf_collateral_diversified
                 & (
-                    clf_collateral_diversified
+                    clf_annual_reapproval_current
                     & (
-                        clf_annual_reapproval_current
+                        clf_included_in_funding_strategy
                         & (
-                            clf_included_in_funding_strategy
+                            clf_balance_sheet_efforts_exhausted
                             & (
-                                clf_balance_sheet_efforts_exhausted
-                                & (
-                                    (~(clf_drawn_non_intraday))
-                                    | clf_drawdown_attested_notified
-                                )
+                                (~(clf_drawn_non_intraday))
+                                | clf_drawdown_attested_notified
                             )
                         )
                     )
@@ -1544,8 +1540,25 @@ def evaluate_aps210_upstream(
                     ),
                     ibis.literal(0, type="decimal(38, 12)"),
                 ),
-                ibis.greatest(
-                    clf_collateral_after_margin, ibis.literal(0, type="decimal(38, 12)")
+                (
+                    ibis.greatest(
+                        clf_collateral_after_margin,
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    )
+                    + ibis.ifelse(
+                        (
+                            clf_collateral_became_ineligible_30d
+                            & (
+                                clf_collateral_days_since_ineligible
+                                <= ibis.literal(30, type="decimal(38, 12)")
+                            )
+                        ),
+                        ibis.greatest(
+                            clf_recently_ineligible_collateral_after_margin,
+                            ibis.literal(0, type="decimal(38, 12)"),
+                        ),
+                        ibis.literal(0, type="decimal(38, 12)"),
+                    )
                 ),
             ),
         ),

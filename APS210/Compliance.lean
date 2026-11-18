@@ -196,12 +196,12 @@ def evaluateAdiCompliance (input : AdiComplianceInput) : AdiComplianceResult :=
     | some _, none => false
   let mlhOk := match effReqMlh, mlhRes with
     | none, _ => true
-    | some _, some r => r.triggerRatioValid && (r.ratioCheck.compliant || stressBreachPermitted)
+    | some _, some r => r.triggerRatioValid && r.ratioCheck.compliant
     | some _, none => false
   let mlhL2Ok := if !input.hasLevel2Group then true else
     match effReqMlh, mlhL2Res with
     | none, _ => true
-    | some _, some r => r.triggerRatioValid && (r.ratioCheck.compliant || stressBreachPermitted)
+    | some _, some r => r.triggerRatioValid && r.ratioCheck.compliant
     | some _, none => false
   let nsfrOk := match effReqNsfr, nsfrRes with
     | none, _ => true

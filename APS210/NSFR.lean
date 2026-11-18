@@ -413,8 +413,10 @@ private def foldClfBucketRsf
 /-- Compute NSFR = ASF / RSF and check compliance against `requiredMinRate` (default 100%, para 60).
     Always enforces Attachment C Paragraph 32(a)–(b) 10% RSF caps (defaulting `none` to 0);
     allocates the limit greedily to highest-fallback-RSF items first (order-independent) and
-    defaults excess fallback to 50% for 32(a) third-party debt (para 34(f)) and 85% for
-    32(b) self-securitised assets (para 36(c)), both overridable via `excessClfFallbackFactor`. -/
+    defaults excess fallback to 85% for both 32(a) third-party debt / host ALA (para 36(c)
+    conservative fallback for >= 1y non-HQLA securities) and 32(b) self-securitised assets
+    (para 36(c)), both overridable via `excessClfFallbackFactor` (e.g. `some (pct 50)` for
+    para 34(f) qualifying < 1y / corporate securities). -/
 def evaluateNsfr
     (requiredMinRate : Rate := pct 100)
     (input : NsfrInput) : NsfrResult :=
@@ -428,7 +430,7 @@ def evaluateNsfr
   let nonClfRsf := sumBy
     (input.rsfAssets.filter (fun a => !isEligible32a a && !isEligible32b a))
     RsfAssetItem.weightedAmount
-  let (rsf32a, rem32aLim) := foldClfBucketRsf (input.rsfAssets.filter isEligible32a) (clfLim + hostAlaLim) (pct 50)
+  let (rsf32a, rem32aLim) := foldClfBucketRsf (input.rsfAssets.filter isEligible32a) (clfLim + hostAlaLim) (pct 85)
   let remClfLim := min clfLim rem32aLim
   let (rsf32b, _) := foldClfBucketRsf (input.rsfAssets.filter isEligible32b) remClfLim (pct 85)
   let assetRsf := nonClfRsf + rsf32a + rsf32b

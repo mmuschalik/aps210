@@ -108,15 +108,26 @@ def find_enclosing_symbol(lines: list[str], idx: int) -> str:
 
 def expand_para_refs(line: str, default_sec: str) -> list[tuple[str, int]]:
     refs: list[tuple[str, int]] = []
-    sec = default_sec
-    if re.search(r"Attachment\s+A", line, re.IGNORECASE):
-        sec = "Attachment A"
-    elif re.search(r"Attachment\s+B", line, re.IGNORECASE):
-        sec = "Attachment B"
-    elif re.search(r"Attachment\s+C", line, re.IGNORECASE):
-        sec = "Attachment C"
-    elif re.search(r"APS\s*210\s+(?:para|paragraph)", line, re.IGNORECASE):
-        sec = "Main Body"
+    sec_markers: list[tuple[int, str]] = []
+    for sm in re.finditer(
+        r"(?:Attachment|Att)\s+([ABC])|Main\s+Body|APS\s*210\s+(?:para|paragraph)",
+        line,
+        re.IGNORECASE,
+    ):
+        g = sm.group(1)
+        if g:
+            sec_markers.append((sm.start(), f"Attachment {g.upper()}"))
+        else:
+            sec_markers.append((sm.start(), "Main Body"))
+
+    def section_at(pos: int) -> str:
+        cur = default_sec
+        for mpos, msec in sec_markers:
+            if mpos <= pos:
+                cur = msec
+            else:
+                break
+        return cur
 
     # Match ranges like "Paragraphs 15–20" or "paras 6-8" or single "para 25"
     for m in re.finditer(
@@ -125,15 +136,17 @@ def expand_para_refs(line: str, default_sec: str) -> list[tuple[str, int]]:
         start = int(m.group(1))
         end = int(m.group(2)) if m.group(2) else start
         if end >= start and (end - start) <= 25:
+            sec = section_at(m.start())
             for n in range(start, end + 1):
-                # Heuristic: Main Body paras 50-61 are sometimes cited in LCR/MLH/NSFR files
                 target_sec = sec
-                if default_sec == "Attachment B" and n >= 50:
+                if default_sec == "Attachment B" and sec == "Attachment B" and n >= 50:
                     target_sec = "Main Body"
                 if (
                     default_sec == "Attachment C"
+                    and sec == "Attachment C"
                     and n in (59, 60, 61)
                     and "Attachment C" not in line
+                    and "Att C" not in line
                 ):
                     target_sec = "Main Body"
                 refs.append((target_sec, n))

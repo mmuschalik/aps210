@@ -55,8 +55,14 @@ example :
        isIntermediated := true, intermediatedLookThroughMet := false } : RetailDeposit).outflowAmount = 100 := by native_decide
 example :
     let d : RetailDeposit := { id := "r7", currency := .foreign "NZD", balance := 100, isStable := true,
+                               hostJurisdictionAppliesBasel := true,
                                hostSupervisorOverrideRate := some (pct 15) }
     d.outflowAmount .level2 = 15 ∧ d.outflowAmount .level1 = 5 := by native_decide
+example :
+    let d : RetailDeposit := { id := "r8", currency := .foreign "NZD", balance := 100, isStable := true,
+                               hostJurisdictionAppliesBasel := false,
+                               hostSupervisorOverrideRate := some (pct 15) }
+    d.outflowAmount .level2 = 5 := by native_decide
 
 -- ============================================================================
 -- 2. Attachment A, HQLA caps (40% and 15%), SFT unwinds, Para 9(e), Para 25, CLF
@@ -74,16 +80,20 @@ example :
         notRehypothecatedIfReceivedInSft := true }
     let opPledged : HqlaOperationalCompliance := { opOk with notPledgedOrOperationalCost := false }
     let assets : List HqlaAsset :=
-      [ { id := "cash", category := .hqla1, currency := .aud, marketValue := 100, operational := opOk }
+      [ { id := "cash", category := .hqla1, currency := .aud, marketValue := 100, operational := opOk,
+          issuerRestrictionSatisfied := true, recognisedByRegulator := true }
       , { id := "f-sov-1", category := .hqla1, currency := .foreign "XYZ", marketValue := 30,
-          operational := opOk, isNonZeroRwForeignSovInForeignCurrency := true }
+          operational := opOk, issuerRestrictionSatisfied := true, recognisedByRegulator := true,
+          isNonZeroRwForeignSovInForeignCurrency := true }
       , { id := "f-sov-2", category := .hqla1, currency := .foreign "XYZ", marketValue := 20,
-          operational := opOk, isNonZeroRwForeignSovInForeignCurrency := true }
+          operational := opOk, issuerRestrictionSatisfied := true, recognisedByRegulator := true,
+          isNonZeroRwForeignSovInForeignCurrency := true }
       , { id := "downgraded-ok", category := .hqla2a, currency := .aud, marketValue := 20,
-          operational := opOk, recognisedByRegulator := false, becameIneligibleWithin30Days := true,
-          hqla2aDiversified := true }
+          operational := opOk, issuerRestrictionSatisfied := true, recognisedByRegulator := false,
+          becameIneligibleWithin30Days := true, hqla2aDiversified := true }
       , { id := "pledged-bad", category := .hqla1, currency := .aud, marketValue := 50,
-          operational := opPledged, becameIneligibleWithin30Days := true } ]
+          operational := opPledged, issuerRestrictionSatisfied := true, recognisedByRegulator := true,
+          becameIneligibleWithin30Days := true } ]
     let unwind := computeUnwindAdjustments [{ hqla1Delta := 10, hqla2aDelta := -5 }]
     let (stock, _) := computeStockOfHqla .level1 assets unwind none [(.foreign "XYZ", 40)]
     -- HQLA1 = 100 + min(30+20, 40) = 140; HQLA2A = 20 * 0.85 = 17; pledged-bad = 0; stock = 157
@@ -172,7 +182,8 @@ example :
     let res := evaluateLcr .foreign false (pct 40)
       { basis := .level1
         hqlaAssets := [{
-          id := "cash", category := .hqla1, currency := .aud, marketValue := 22
+          id := "cash", category := .hqla1, currency := .aud, marketValue := 22,
+          issuerRestrictionSatisfied := true, recognisedByRegulator := true,
           operational := {
             convertibleToCashAnytime := true, unencumberedAndControlled := true,
             controlEvidenced := true, notPledgedOrOperationalCost := true,
@@ -197,8 +208,10 @@ example :
     let res := evaluateLcr .locallyIncorporated true (pct 100)
       { basis := .level1
         hqlaAssets :=
-          [ { id := "aud-cash", category := .hqla1, currency := .aud, marketValue := 50, operational := opOk }
-          , { id := "usd-cash", category := .hqla1, currency := .foreign "USD", marketValue := 100, operational := opOk } ]
+          [ { id := "aud-cash", category := .hqla1, currency := .aud, marketValue := 50, operational := opOk,
+              issuerRestrictionSatisfied := true, recognisedByRegulator := true }
+          , { id := "usd-cash", category := .hqla1, currency := .foreign "USD", marketValue := 100, operational := opOk,
+              issuerRestrictionSatisfied := true, recognisedByRegulator := true } ]
         retailDeposits := []
         otherOutflows :=
           [ { id := "aud-out", currency := .aud, category := .nonOperationalOther, amount := 40 }
@@ -212,9 +225,14 @@ example :
 example :
     let res := evaluateMlh (pct 9)
       { assets := [
-          { id := "cgs", category := .commonwealthAndSemiGovtSecurities, marketValue := 8 },
-          { id := "adi-dep", category := .netDepositsWithOtherAdisTwoBusinessDays, marketValue := 5 },
-          { id := "non-rba", category := .adiBankBillsCdsAndDebt, marketValue := 10, rbaRepoEligible := false }
+          { id := "cgs", category := .commonwealthAndSemiGovtSecurities, marketValue := 8,
+            unencumberedOrApraApproved := true, rbaRepoEligible := true, nonSubordinated := true,
+            liquidatableWithinTwoBusinessDays := true },
+          { id := "adi-dep", category := .netDepositsWithOtherAdisTwoBusinessDays, marketValue := 5,
+            unencumberedOrApraApproved := true, liquidatableWithinTwoBusinessDays := true },
+          { id := "non-rba", category := .adiBankBillsCdsAndDebt, marketValue := 10,
+            unencumberedOrApraApproved := true, rbaRepoEligible := false, nonSubordinated := true,
+            liquidatableWithinTwoBusinessDays := true }
         ]
         placementsByOtherAdis := 3
         liabilities := [{ id := "liab", amount := 100 }]
@@ -307,7 +325,9 @@ example :
         bufferPolicy := some .enforceAllBuffers,
         notifiedApraOfRelianceOrPriorDiscretion := true,
         mlhInput := some {
-          assets := [{ id := "cgs", category := .commonwealthAndSemiGovtSecurities, marketValue := 12 }],
+          assets := [{ id := "cgs", category := .commonwealthAndSemiGovtSecurities, marketValue := 12,
+                       unencumberedOrApraApproved := true, rbaRepoEligible := true, nonSubordinated := true,
+                       liquidatableWithinTwoBusinessDays := true }],
           liabilities := [{ id := "dep", amount := 100 }],
           triggerRatio := pct 10
         } }
@@ -537,7 +557,7 @@ example :
 example :
     Table3OutflowCategory.wholesaleNoticeDepositCalled.rate = pct 100 := by native_decide
 
--- Issue 6: NSFR CLF-eligible assets above limit use their category fallback factor (50% 3rd-party / 85% self-sec default)
+-- Issue 6: NSFR CLF-eligible assets above limit use conservative 85% default fallback (para 36(c))
 example :
     let res := NSFR.evaluateNsfr (pct 100)
       { asfItems := [{ id := "cap", category := .regulatoryCapitalExTier2Lt1Yr, carryingValue := 1000 }]
@@ -546,7 +566,7 @@ example :
           , { id := "clfself", category := .selfSecuritisedClfEligible, carryingValue := 100 } ]
         obsExposures := []
         recognisedClfLimit := some 0 }
-    res.totalRsf = 50 + 85 := by native_decide
+    res.totalRsf = 85 + 85 := by native_decide
 
 -- Issue 7: `classifyLoanRsf` fixes (CB >=1yr, 35(a)->35(b) fallback, FI <6m HQLA1 10%)
 example :
@@ -578,7 +598,8 @@ example :
         controlEvidenced := true, notPledgedOrOperationalCost := true,
         notRehypothecatedIfReceivedInSft := true }
     ({ id := "p29", category := .hqla1, currency := .foreign "NZD", marketValue := 100,
-       operational := op, freelyTransferableAtLevel2 := false,
+       operational := op, issuerRestrictionSatisfied := true, recognisedByRegulator := true,
+       freelyTransferableAtLevel2 := false,
        level2TransferableCap := some 40 } : HqlaAsset).valueAfterHaircut .level2 = 40 := by native_decide
 
 -- ============================================================================
@@ -612,7 +633,8 @@ example :
         notRehypothecatedIfReceivedInSft := true }
     let res := evaluateLcr .locallyIncorporated false (pct 100)
       { basis := .level1
-        hqlaAssets := [{ id := "h1", category := .hqla1, currency := .aud, marketValue := 105, operational := op }]
+        hqlaAssets := [{ id := "h1", category := .hqla1, currency := .aud, marketValue := 105, operational := op,
+                         issuerRestrictionSatisfied := true, recognisedByRegulator := true }]
         retailDeposits := []
         otherOutflows := [{ id := "o1", currency := .aud, category := .nonOperationalOther, amount := 100 }]
         inflows := []
@@ -725,7 +747,8 @@ example :
         inflows := [] }
     let lcrAll : LcrInput :=
       { basis := .level1,
-        hqlaAssets := [{ id := "h1", category := .hqla1, currency := .aud, marketValue := 1000, operational := op }],
+        hqlaAssets := [{ id := "h1", category := .hqla1, currency := .aud, marketValue := 1000, operational := op,
+                         issuerRestrictionSatisfied := true, recognisedByRegulator := true }],
         retailDeposits := [],
         otherOutflows := [{ id := "o1", currency := .aud, category := .nonOperationalOther, amount := 1000 }],
         inflows := [] }
@@ -835,12 +858,31 @@ example :
        residualMaturityOrNoticeGt30Days := true, noWithdrawalRightOrMaterialPenalty := true,
        categoryTaintedByEarlyWithdrawal := true } : RetailDeposit).outflowAmount = 100 := by native_decide
 
--- Fix: Para 32(a) excess defaults to 50% (not 85%) and host ALA works independently of CLF = 0
+-- Fix: Para 32(a) excess defaults conservatively to 85% (para 36(c)) and host ALA works independently of CLF = 0
 example :
     let a : NSFR.RsfAssetItem := { id := "a", category := .clfThirdPartyDebtOrHostAla, carryingValue := 100 }
     let rNoLim := NSFR.evaluateNsfr (pct 100) { asfItems := [], rsfAssets := [a], obsExposures := [] }
     let rHostAla := NSFR.evaluateNsfr (pct 100) { asfItems := [], rsfAssets := [a], obsExposures := [], hostAlaInLcrLimit := 100 }
-    rNoLim.totalRsf = 50 ∧ rHostAla.totalRsf = 10 := by native_decide
+    rNoLim.totalRsf = 85 ∧ rHostAla.totalRsf = 10 := by native_decide
+
+-- Fix: Para 25 CLF grace period removes only recently-ineligible collateral from bound 15(c) after > 30 days
+example :
+    let base : ClfInput :=
+      { approvedByApra := true, contractualAmount := 100,
+        pledgedUnderZeroRunoffSecFunding := 0, receivedUnderZeroInflowSecLending := 0,
+        collateralHeldAfterRbaMargins := 60,
+        recentlyIneligibleCollateralAfterRbaMargins := 30,
+        collateralDiversified := true, annualReapprovalCurrent := true,
+        includedInFundingStrategy := true, balanceSheetEffortsExhausted := true,
+        collateralBecameIneligibleWithin30Days := true }
+    ({ base with collateralDaysSinceIneligible := some 20 } : ClfInput).recognisedAmount = 90 ∧
+    ({ base with collateralDaysSinceIneligible := some 35 } : ClfInput).recognisedAmount = 60 := by native_decide
+
+-- Fix: APRA-approved non-debt MLH securities do not require RBA repo-eligibility or non-subordination
+example :
+    ({ id := "apra-eq", category := .apraApprovedOtherSecurities, marketValue := 50,
+       unencumberedOrApraApproved := true, rbaRepoEligible := false, nonSubordinated := false,
+       isDebtSecurity := false, liquidatableWithinTwoBusinessDays := true } : MLH.MlhAsset).eligibleValue = 50 := by native_decide
 
 -- Fix: NSFR SFT netting per Attachment C para 26 & APS 110 Att D para 38
 example :

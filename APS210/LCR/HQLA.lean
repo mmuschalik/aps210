@@ -170,15 +170,15 @@ structure HqlaAsset where
       foreign currency (subject to aggregate cap at stressed net cash outflows in that currency). -/
   isNonZeroRwForeignSovInForeignCurrency : Bool := false
   /-- Para 24, 29: At Level 2, whether excess liquidity is freely transferable across borders. -/
-  freelyTransferableAtLevel2 : Bool := true
+  freelyTransferableAtLevel2 : Bool := false
   /-- Para 29: When `freelyTransferableAtLevel2 = false`, the portion eligible at Level 2
       (up to the subsidiary/jurisdiction's own net cash outflow needs; defaults to 0 if `none`). -/
   level2TransferableCap : Option Money := none
   /-- Para 9(c)(iv), 10(a)(iv), 10(b)(i)-(ii), 12(a)(i), 12(b)(i), 12(c)(i):
       Whether issuer/originator restriction is satisfied. -/
-  issuerRestrictionSatisfied : Bool := true
+  issuerRestrictionSatisfied : Bool := false
   /-- Para 10, 12: Recognised by APRA or host prudential regulator. -/
-  recognisedByRegulator : Bool := true
+  recognisedByRegulator : Bool := false
   /-- Para 25: 30-calendar-day grace period if asset recently became ineligible (e.g. rating downgrade). -/
   becameIneligibleWithin30Days : Bool := false
   /-- Para 25: Optional numeric day count since ineligibility (when supplied, must be <= 30). -/
@@ -322,39 +322,44 @@ structure ClfInput where
   clfDrawnNonIntraday : Bool := false
   /-- Para 21: If drawn non-intraday, senior management attestation and APRA notice completed. -/
   drawdownAttestedAndNotifiedToApra : Bool := false
+  /-- Para 25: Optional CLF collateral that recently became ineligible (kept in para 15(c) bound
+      for up to 30 calendar days; excluded from bound `c` once > 30 days). -/
+  recentlyIneligibleCollateralAfterRbaMargins : Money := 0
   /-- Para 25: Optional 30-day grace period if CLF collateral recently became ineligible. -/
   collateralBecameIneligibleWithin30Days : Bool := false
   /-- Para 25: Numeric day count since CLF collateral became ineligible (when supplied, must be <= 30). -/
   collateralDaysSinceIneligible : Option Nat := none
   deriving DecidableEq, Repr
 
-/-- Attachment A, Paragraphs 16–21 & 25: Whether CLF governance, operational, diversification, and grace conditions hold. -/
+/-- Attachment A, Paragraphs 16–21: Whether CLF governance, operational, and diversification conditions hold. -/
 def ClfInput.processEligible (clf : ClfInput) : Bool :=
   let opOk := match clf.collateralOperational with
     | some op => op.isMet
     | none => true
-  let graceOk := !clf.collateralBecameIneligibleWithin30Days || match clf.collateralDaysSinceIneligible with
-    | some d => d <= 30
-    | none => true
   opOk &&
-  graceOk &&
   clf.collateralDiversified &&
   clf.annualReapprovalCurrent &&
   clf.includedInFundingStrategy &&
   clf.balanceSheetEffortsExhausted &&
   (!clf.clfDrawnNonIntraday || clf.drawdownAttestedAndNotifiedToApra)
 
-/-- Attachment A, Paragraph 15(a)–(c) & 16–21: Lowest of the three CLF bounds
-    when APRA-approved and all CLF process/diversification conditions are met. -/
+/-- Attachment A, Paragraph 15(a)–(c), 16–21 & 25: Lowest of the three CLF bounds
+    when APRA-approved and all CLF process/diversification conditions are met.
+    Para 25 grace period only retains/removes `recentlyIneligibleCollateralAfterRbaMargins`
+    from the collateral bound in 15(c) rather than zeroing the entire CLF. -/
 def ClfInput.recognisedAmount (clf : ClfInput) : Money :=
   if !clf.approvedByApra then 0
   else if !clf.processEligible then 0
   else
+    let graceOk := clf.collateralBecameIneligibleWithin30Days && match clf.collateralDaysSinceIneligible with
+      | some d => d <= 30
+      | none => true
     let a := nonNeg clf.contractualAmount
     let b := nonNeg (clf.contractualAmount
       - nonNeg clf.pledgedUnderZeroRunoffSecFunding
       + nonNeg clf.receivedUnderZeroInflowSecLending)
-    let c := nonNeg clf.collateralHeldAfterRbaMargins
+    let c := nonNeg clf.collateralHeldAfterRbaMargins +
+      (if graceOk then nonNeg clf.recentlyIneligibleCollateralAfterRbaMargins else 0)
     min a (min b c)
 
 /-- Attachment A, Paragraph 9(e): Apply aggregate per-currency cap to non-0% RW

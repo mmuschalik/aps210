@@ -190,20 +190,22 @@ def clfRecognisedExpr : SExpr :=
       (.binOp .add
         (.binOp .sub (.var "clf_contractual") (.unOp .nonNeg (.var "clf_pledged_zero_runoff")))
         (.unOp .nonNeg (.var "clf_received_zero_inflow")))
-  let boundC := .unOp .nonNeg (.var "clf_collateral_after_margin")
-  let graceOk := .binOp .or
-    (.unOp .not (.var "clf_collateral_became_ineligible_30d"))
+  let graceOk := .binOp .and
+    (.var "clf_collateral_became_ineligible_30d")
     (.binOp .le (.var "clf_collateral_days_since_ineligible") (.litRat 30 1))
+  let boundC :=
+    .binOp .add
+      (.unOp .nonNeg (.var "clf_collateral_after_margin"))
+      (.ite graceOk (.unOp .nonNeg (.var "clf_recently_ineligible_collateral_after_margin")) (.litRat 0 1))
   let drawdownOk := .binOp .or
     (.unOp .not (.var "clf_drawn_non_intraday"))
     (.var "clf_drawdown_attested_notified")
   let clfEligible :=
     .binOp .and (.var "clf_approved_by_apra")
-      (.binOp .and graceOk
-        (.binOp .and (.var "clf_collateral_diversified")
-          (.binOp .and (.var "clf_annual_reapproval_current")
-            (.binOp .and (.var "clf_included_in_funding_strategy")
-              (.binOp .and (.var "clf_balance_sheet_efforts_exhausted") drawdownOk)))))
+      (.binOp .and (.var "clf_collateral_diversified")
+        (.binOp .and (.var "clf_annual_reapproval_current")
+          (.binOp .and (.var "clf_included_in_funding_strategy")
+            (.binOp .and (.var "clf_balance_sheet_efforts_exhausted") drawdownOk))))
   .ite clfEligible
     (.binOp .min boundA (.binOp .min boundB boundC))
     (.litRat 0 1)
@@ -229,6 +231,7 @@ def upstreamProgram : Program :=
       , ("clf_pledged_zero_runoff", .rat)
       , ("clf_received_zero_inflow", .rat)
       , ("clf_collateral_after_margin", .rat)
+      , ("clf_recently_ineligible_collateral_after_margin", .rat)
       , ("clf_collateral_diversified", .bool)
       , ("clf_annual_reapproval_current", .bool)
       , ("clf_included_in_funding_strategy", .bool)
@@ -431,6 +434,7 @@ def upstreamInputToScalars (input : UpstreamInput) : Row :=
   , ("clf_pledged_zero_runoff", .rat input.clf.pledgedZeroRunoff)
   , ("clf_received_zero_inflow", .rat input.clf.receivedZeroInflow)
   , ("clf_collateral_after_margin", .rat input.clf.collateralAfterMargin)
+  , ("clf_recently_ineligible_collateral_after_margin", .rat input.clf.recentlyIneligibleCollateralAfterMargin)
   , ("clf_collateral_diversified", .bool input.clf.collateralDiversified)
   , ("clf_annual_reapproval_current", .bool input.clf.annualReapprovalCurrent)
   , ("clf_included_in_funding_strategy", .bool input.clf.includedInFundingStrategy)

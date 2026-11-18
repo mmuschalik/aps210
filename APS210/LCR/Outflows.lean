@@ -33,7 +33,7 @@ structure RetailDeposit where
   balance : Money
   /-- Para 35: If intermediated, whether all four para 35(a)-(d) look-through conditions hold. -/
   isIntermediated : Bool := false
-  intermediatedLookThroughMet : Bool := true
+  intermediatedLookThroughMet : Bool := false
   /-- Para 41–43: Term deposit > 30d with no legal withdrawal right or material penalty. -/
   residualMaturityOrNoticeGt30Days : Bool := false
   noWithdrawalRightOrMaterialPenalty : Bool := false
@@ -52,6 +52,9 @@ structure RetailDeposit where
       isOnlineAccount := false
       noEstablishedRelationship := false
       isHeavilyRateDriven := false }
+  /-- Para 26(a) & 27: Whether the host jurisdiction applies the Basel liquidity framework
+      (required for `hostSupervisorOverrideRate` to apply at Level 2). -/
+  hostJurisdictionAppliesBasel : Bool := false
   /-- Para 26(a): Optional host-supervisor override rate for offshore Level 2 subsidiaries. -/
   hostSupervisorOverrideRate : Option Rate := none
   deriving DecidableEq, Repr
@@ -75,9 +78,9 @@ def RetailDeposit.outflowAmount (basis : ConsolidationBasis := .level1) (d : Ret
     bal * pct 100
   else if d.isExcludedTermDeposit then
     0
-  else match basis, d.hostSupervisorOverrideRate with
-    | .level2, some r => bal * nonNeg r
-    | _, _ =>
+  else match basis, d.hostJurisdictionAppliesBasel, d.hostSupervisorOverrideRate with
+    | .level2, true, some r => bal * nonNeg r
+    | _, _, _ =>
       let lim := nonNeg d.guaranteeLimit
       if d.isStable then
         let stablePart := min bal lim
@@ -101,9 +104,9 @@ def RetailDeposit.runoffRate (basis : ConsolidationBasis := .level1) (d : Retail
     else pct 100
   else if d.noticeDepositCalled then pct 100
   else if d.isExcludedTermDeposit then pct 0
-  else match basis, d.hostSupervisorOverrideRate with
-    | .level2, some r => nonNeg r
-    | _, _ =>
+  else match basis, d.hostJurisdictionAppliesBasel, d.hostSupervisorOverrideRate with
+    | .level2, true, some r => nonNeg r
+    | _, _, _ =>
       if d.isStable then pct 5
       else lessStableRunoffRate d.scorecard.score
 

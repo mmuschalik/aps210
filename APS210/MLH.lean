@@ -30,19 +30,27 @@ structure MlhAsset where
   category : MlhAssetCategory
   marketValue : Money
   /-- Para 2: Free from encumbrances, or encumbered with APRA prudential approval. -/
-  unencumberedOrApraApproved : Bool := true
+  unencumberedOrApraApproved : Bool := false
   /-- Para 3: Eligible for repurchase agreement with the RBA (required for debt securities). -/
-  rbaRepoEligible : Bool := true
+  rbaRepoEligible : Bool := false
   /-- Para 3: Non-subordinated (required for debt securities). -/
-  nonSubordinated : Bool := true
+  nonSubordinated : Bool := false
+  /-- Para 2(g) & 3: For `apraApprovedOtherSecurities`, whether the security is a debt security
+      (if true, para 3 RBA repo-eligibility and non-subordination apply). -/
+  isDebtSecurity : Bool := true
   /-- Para 4: Operational capacity to liquidate within two business days. -/
-  liquidatableWithinTwoBusinessDays : Bool := true
+  liquidatableWithinTwoBusinessDays : Bool := false
   /-- Para 4: Optional numeric liquidation horizon in business days (must be <= 2 when supplied). -/
   liquidationBusinessDays : Option Nat := none
   deriving DecidableEq, Repr
 
+def MlhAsset.requiresDebtCriteria (a : MlhAsset) : Bool :=
+  match a.category with
+  | .apraApprovedOtherSecurities => a.isDebtSecurity
+  | c => c.isDebtSecurity
+
 def MlhAsset.isEligible (a : MlhAsset) : Bool :=
-  let debtOk := !a.category.isDebtSecurity || (a.rbaRepoEligible && a.nonSubordinated)
+  let debtOk := !a.requiresDebtCriteria || (a.rbaRepoEligible && a.nonSubordinated)
   let daysOk := match a.liquidationBusinessDays with
     | some d => d <= 2
     | none => true
@@ -71,8 +79,8 @@ structure MlhInput where
   /-- Para 2(f): Placements by other ADIs to be netted against deposits held with other ADIs. -/
   placementsByOtherAdis : Money := 0
   liabilities : List MlhLiabilityItem
-  /-- Para 5: ADI's internal trigger ratio (must be strictly above `requiredMinRate`). -/
-  triggerRatio : Rate := pct 10
+  /-- Para 5: ADI's internal trigger ratio (must be explicitly set and strictly above `requiredMinRate`). -/
+  triggerRatio : Rate
   deriving DecidableEq, Repr
 
 /-- Output of Attachment B MLH evaluation. -/

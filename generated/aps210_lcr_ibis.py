@@ -1244,7 +1244,13 @@ def evaluate_lcr(
                             ),
                             ibis.literal(0, type="decimal(38, 12)"),
                             ibis.ifelse(
-                                (is_level2 & t["has_host_override"]),
+                                (
+                                    is_level2
+                                    & (
+                                        t["host_jurisdiction_applies_basel"]
+                                        & t["has_host_override"]
+                                    )
+                                ),
                                 (
                                     ibis.greatest(
                                         t["balance"],

@@ -150,7 +150,7 @@ structure DepositAccount where
   accountId : String
   customerGroupId : String
   customerType : DepositCustomerType
-  managedAsRetail : Bool := true
+  managedAsRetail : Bool := false
   productCategory : String
   balance : Money
   hasEarlyWithdrawalNoPenalty : Bool
@@ -347,6 +347,7 @@ structure ClfSummaryInput where
   pledgedZeroRunoff : Money := 0
   receivedZeroInflow : Money := 0
   collateralAfterMargin : Money := 0
+  recentlyIneligibleCollateralAfterMargin : Money := 0
   collateralDiversified : Bool := false
   annualReapprovalCurrent : Bool := false
   includedInFundingStrategy : Bool := false
@@ -363,6 +364,7 @@ def ClfSummaryInput.toLcrClfInput (c : ClfSummaryInput) : LCR.ClfInput :=
   , pledgedUnderZeroRunoffSecFunding := c.pledgedZeroRunoff
   , receivedUnderZeroInflowSecLending := c.receivedZeroInflow
   , collateralHeldAfterRbaMargins := c.collateralAfterMargin
+  , recentlyIneligibleCollateralAfterRbaMargins := c.recentlyIneligibleCollateralAfterMargin
   , collateralDiversified := c.collateralDiversified
   , annualReapprovalCurrent := c.annualReapprovalCurrent
   , includedInFundingStrategy := c.includedInFundingStrategy

@@ -205,7 +205,7 @@ def LocalOperationalCapacity.isCompliant (loc : LocalOperationalCapacity) : Bool
   loc.offshoreOutageMinBusinessDays >= 3 &&
   loc.coversTimeZonesAndPublicHolidays
 
-/-- Paragraphs 14 & 70, Attachment A para 5, Attachment B para 6:
+/-- Main Body Paragraph 14, Main Body Paragraph 70, Attachment A para 5, Attachment B para 6:
     Notification duties (concerns, LCR breach, MLH shortfall, severe stress, ELA). -/
 structure NotificationStatus where
   hasLiquidityConcerns : Bool

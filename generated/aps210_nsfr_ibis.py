@@ -4874,7 +4874,7 @@ def evaluate_nsfr(
                                                 ibis.literal(0, type="decimal(38, 12)"),
                                             ),
                                             (
-                                                ibis.literal(50, type="decimal(38, 12)")
+                                                ibis.literal(85, type="decimal(38, 12)")
                                                 / ibis.literal(
                                                     100, type="decimal(38, 12)"
                                                 )

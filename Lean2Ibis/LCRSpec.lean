@@ -157,7 +157,8 @@ def retailOutflowExpr : SExpr :=
       bal
       (.ite excludedTerm
         (.litRat 0 1)
-        (.ite (.binOp .and (.var "is_level2") (.col "has_host_override"))
+        (.ite (.binOp .and (.var "is_level2")
+                (.binOp .and (.col "host_jurisdiction_applies_basel") (.col "has_host_override")))
           (.binOp .mul bal (.unOp .nonNeg (.col "host_override_rate")))
           (.ite (.col "is_stable") stableOutflow (.binOp .mul bal lessStableRate)))))
 
@@ -279,7 +280,7 @@ def lcrProgram : Program :=
       , ("retail_deposits", ["currency", "balance", "guarantee_limit", "is_intermediated",
           "intermediated_look_through_met", "notice_deposit_called",
           "residual_maturity_or_notice_gt_30d", "no_withdrawal_right_or_material_penalty",
-          "category_tainted_by_early_withdrawal", "has_host_override",
+          "category_tainted_by_early_withdrawal", "host_jurisdiction_applies_basel", "has_host_override",
           "host_override_rate", "is_stable", "above_guarantee_limit_or_250k",
           "is_online_account", "no_established_relationship", "is_heavily_rate_driven"])
       , ("other_outflows", ["category", "currency", "amount", "custom_rate", "has_apra_alt_amount", "apra_alt_amount"])

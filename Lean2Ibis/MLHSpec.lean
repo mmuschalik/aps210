@@ -21,6 +21,7 @@ def mlhAssetToRow (a : MlhAsset) : Row :=
   , ("unencumbered_or_apra_approved", .bool a.unencumberedOrApraApproved)
   , ("rba_repo_eligible", .bool a.rbaRepoEligible)
   , ("non_subordinated", .bool a.nonSubordinated)
+  , ("is_debt_security", .bool a.isDebtSecurity)
   , ("liquidatable_within_two_business_days", .bool a.liquidatableWithinTwoBusinessDays)
   , ("liquidation_days_ok", .bool (match a.liquidationBusinessDays with | some d => d <= 2 | none => true)) ]
 
@@ -36,7 +37,7 @@ def mlhIsDebtExpr : SExpr :=
     , ("govt_guaranteed_debt_securities", .litBool true)
     , ("supranational_and_foreign_govt_debt", .litBool true)
     , ("adi_bank_bills_cds_and_debt", .litBool true)
-    , ("apra_approved_other_securities", .litBool true)
+    , ("apra_approved_other_securities", .col "is_debt_security")
     , ("notes_and_coin_and_settlement_funds", .litBool false)
     , ("net_deposits_with_other_adis_two_business_days", .litBool false) ]
     (.litBool false)
@@ -61,8 +62,8 @@ def mlhProgram : Program :=
   { name := "evaluate_mlh"
     tableParams :=
       [ ("assets", ["category", "market_value", "unencumbered_or_apra_approved",
-                    "rba_repo_eligible", "non_subordinated", "liquidatable_within_two_business_days",
-                    "liquidation_days_ok"])
+                    "rba_repo_eligible", "non_subordinated", "is_debt_security",
+                    "liquidatable_within_two_business_days", "liquidation_days_ok"])
       , ("liabilities", ["is_on_balance_sheet_or_irrevocable", "apra_approved_exclusion", "amount"]) ]
     scalarParams := [("placements_by_other_adis", .rat), ("required_min_rate", .rat), ("trigger_ratio", .rat)]
     lets :=
@@ -101,11 +102,13 @@ theorem mlhAsset_ir_equiv (a : MlhAsset) :
   have h0 : (0 : Rat) / 1 = 0 := by native_decide
   cases hcat : a.category <;>
   simp [mlhAssetToRow, mlhEligibleValueExpr, mlhIsDebtExpr, MlhAsset.eligibleValue,
-    MlhAsset.isEligible, MlhAssetCategory.isDebtSecurity, mlhCategoryToStr, hcat,
+    MlhAsset.isEligible, MlhAsset.requiresDebtCriteria, MlhAssetCategory.isDebtSecurity,
+    mlhCategoryToStr, hcat,
     evalSExpr, evalCaseStr, Row.get, Val.asStr, Val.asBool, Val.asRat, h0] <;>
   cases a.unencumberedOrApraApproved <;>
   cases a.rbaRepoEligible <;>
   cases a.nonSubordinated <;>
+  cases a.isDebtSecurity <;>
   cases a.liquidatableWithinTwoBusinessDays <;>
   cases a.liquidationBusinessDays <;>
   simp
@@ -186,11 +189,13 @@ theorem mlhProgram_equiv_evaluateMlh (requiredMinRate : Rate) (input : MlhInput)
     intro env a
     cases hcat : a.category <;>
     simp [mlhAssetToRow, mlhEligibleValueExpr, mlhIsDebtExpr, MlhAsset.eligibleValue,
-      MlhAsset.isEligible, MlhAssetCategory.isDebtSecurity, mlhCategoryToStr, hcat,
+      MlhAsset.isEligible, MlhAsset.requiresDebtCriteria, MlhAssetCategory.isDebtSecurity,
+      mlhCategoryToStr, hcat,
       evalSExpr, evalCaseStr, Row.get, Val.asStr, Val.asBool, Val.asRat, h0] <;>
     cases a.unencumberedOrApraApproved <;>
     cases a.rbaRepoEligible <;>
     cases a.nonSubordinated <;>
+    cases a.isDebtSecurity <;>
     cases a.liquidatableWithinTwoBusinessDays <;>
     cases a.liquidationBusinessDays <;>
     simp

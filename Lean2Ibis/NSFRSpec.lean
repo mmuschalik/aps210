@@ -198,7 +198,7 @@ def nsfrProgram : Program :=
       , ("clf_32a_lim", .scalar (.binOp .add (.var "clf_lim") (.unOp .nonNeg (.var "host_ala_in_lcr_limit"))))
       , ("rem_32a_lim", .scalar (.unOp .nonNeg (.binOp .sub (.var "clf_32a_lim") (.var "total_32a"))))
       , ("rem_lim", .scalar (.binOp .min (.var "clf_lim") (.var "rem_32a_lim")))
-      , ("rsf_32a", .agg .sum (mkClfBucketRel is32a "clf_32a_lim" (.litRat 50 100)) (.col "item_rsf"))
+      , ("rsf_32a", .agg .sum (mkClfBucketRel is32a "clf_32a_lim" (.litRat 85 100)) (.col "item_rsf"))
       , ("rsf_32b", .agg .sum (mkClfBucketRel is32b "rem_lim" (.litRat 85 100)) (.col "item_rsf"))
       , ("asset_rsf", .scalar (.binOp .add (.col "non_clf_rsf") (.binOp .add (.col "rsf_32a") (.col "rsf_32b"))))
       , ("obs_rsf", .aggSum (.table "obs_exposures")

@@ -47,6 +47,7 @@ RETAIL_SCHEMA = ibis.schema(
         "residual_maturity_or_notice_gt_30d": "boolean",
         "no_withdrawal_right_or_material_penalty": "boolean",
         "category_tainted_by_early_withdrawal": "boolean",
+        "host_jurisdiction_applies_basel": "boolean",
         "has_host_override": "boolean",
         "host_override_rate": "decimal(38, 12)",
         "is_stable": "boolean",
@@ -248,6 +249,7 @@ def main():
                 False,
                 False,
                 False,
+                False,
                 Decimal(0),
                 True,
                 False,
@@ -262,6 +264,7 @@ def main():
                 Decimal(250000),
                 False,
                 True,
+                False,
                 False,
                 False,
                 False,
@@ -357,6 +360,7 @@ def main():
                 False,
                 False,
                 False,
+                False,
                 Decimal(0),
                 True,
                 False,
@@ -410,6 +414,7 @@ def main():
                 True,  # residual_maturity_or_notice_gt_30d
                 True,  # no_withdrawal_right_or_material_penalty
                 False,  # category_tainted_by_early_withdrawal
+                False,  # host_jurisdiction_applies_basel
                 False,
                 Decimal(0),
                 True,
