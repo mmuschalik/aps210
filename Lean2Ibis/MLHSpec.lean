@@ -23,7 +23,8 @@ def mlhAssetToRow (a : MlhAsset) : Row :=
   , ("non_subordinated", .bool a.nonSubordinated)
   , ("is_debt_security", .bool a.isDebtSecurity)
   , ("liquidatable_within_two_business_days", .bool a.liquidatableWithinTwoBusinessDays)
-  , ("liquidation_days_ok", .bool (match a.liquidationBusinessDays with | some d => d <= 2 | none => true)) ]
+  , ("liquidation_days_ok", .bool (match a.liquidationBusinessDays with | some d => d <= 2 | none => true))
+  , ("apra_approved", .bool a.apraApproved) ]
 
 def mlhLiabilityToRow (l : MlhLiabilityItem) : Row :=
   [ ("is_on_balance_sheet_or_irrevocable", .bool l.isOnBalanceSheetOrIrrevocableCommitment)
@@ -46,9 +47,13 @@ def mlhIsDebtExpr : SExpr :=
 def mlhEligibleValueExpr : SExpr :=
   let debtOk := .binOp .or (.unOp .not mlhIsDebtExpr)
     (.binOp .and (.col "rba_repo_eligible") (.col "non_subordinated"))
+  let apraOk := .binOp .or
+    (.binOp .ne (.col "category") (.litStr "apra_approved_other_securities"))
+    (.col "apra_approved")
   let eligible := .binOp .and (.col "unencumbered_or_apra_approved")
     (.binOp .and debtOk
-      (.binOp .and (.col "liquidatable_within_two_business_days") (.col "liquidation_days_ok")))
+      (.binOp .and (.col "liquidatable_within_two_business_days")
+        (.binOp .and (.col "liquidation_days_ok") apraOk)))
   .ite eligible (.unOp .nonNeg (.col "market_value")) (.litRat 0 1)
 
 /-- IR expression for `MlhLiabilityItem.includedAmount`. -/
@@ -63,7 +68,7 @@ def mlhProgram : Program :=
     tableParams :=
       [ ("assets", ["category", "market_value", "unencumbered_or_apra_approved",
                     "rba_repo_eligible", "non_subordinated", "is_debt_security",
-                    "liquidatable_within_two_business_days", "liquidation_days_ok"])
+                    "liquidatable_within_two_business_days", "liquidation_days_ok", "apra_approved"])
       , ("liabilities", ["is_on_balance_sheet_or_irrevocable", "apra_approved_exclusion", "amount"]) ]
     scalarParams := [("placements_by_other_adis", .rat), ("required_min_rate", .rat), ("trigger_ratio", .rat)]
     lets :=
@@ -82,13 +87,13 @@ def mlhProgram : Program :=
       , ("total_liabilities", .aggSum (.table "liabilities") mlhLiabilityIncludedExpr)
       , ("compliant", .scalar
           (.ite (.binOp .le (.col "total_liabilities") (.litRat 0 1))
-            (.binOp .le (.litRat 0 1) (.col "eligible_liquid_assets"))
+            (.binOp .lt (.litRat 0 1) (.col "eligible_liquid_assets"))
             (.binOp .le (.binOp .mul (.col "required_min_rate") (.col "total_liabilities")) (.col "eligible_liquid_assets"))))
       , ("trigger_ratio_valid", .scalar
           (.binOp .gt (.col "trigger_ratio") (.col "required_min_rate")))
       , ("above_trigger_ratio", .scalar
           (.ite (.binOp .le (.col "total_liabilities") (.litRat 0 1))
-            (.binOp .le (.litRat 0 1) (.col "eligible_liquid_assets"))
+            (.binOp .lt (.litRat 0 1) (.col "eligible_liquid_assets"))
             (.binOp .le (.binOp .mul (.col "trigger_ratio") (.col "total_liabilities")) (.col "eligible_liquid_assets")))) ]
     outputs :=
       [ ("eligible_liquid_assets", .col "eligible_liquid_assets")
@@ -110,6 +115,7 @@ theorem mlhAsset_ir_equiv (a : MlhAsset) :
   cases a.nonSubordinated <;>
   cases a.isDebtSecurity <;>
   cases a.liquidatableWithinTwoBusinessDays <;>
+  cases a.apraApproved <;>
   cases a.liquidationBusinessDays <;>
   simp
   all_goals (
@@ -197,6 +203,7 @@ theorem mlhProgram_equiv_evaluateMlh (requiredMinRate : Rate) (input : MlhInput)
     cases a.nonSubordinated <;>
     cases a.isDebtSecurity <;>
     cases a.liquidatableWithinTwoBusinessDays <;>
+    cases a.apraApproved <;>
     cases a.liquidationBusinessDays <;>
     simp
     all_goals (
@@ -246,12 +253,32 @@ theorem mlhProgram_equiv_evaluateMlh (requiredMinRate : Rate) (input : MlhInput)
     intro env
     rw [sumBy_map]
     exact sumBy_foldl_ext _ _ _ (fun l _ => h_liab_val env l) 0
+  have h_liab_nonneg : ∀ (ls : List MlhLiabilityItem), 0 ≤ APS210.sumBy ls MlhLiabilityItem.includedAmount := by
+    intro ls
+    have hfold : ∀ (xs : List MlhLiabilityItem) (acc : Rat), 0 ≤ acc →
+        0 ≤ xs.foldl (fun a x => a + MlhLiabilityItem.includedAmount x) acc := by
+      intro xs
+      induction xs with
+      | nil => intro acc hacc; exact hacc
+      | cons x xs ih =>
+        intro acc hacc
+        apply ih
+        have hx : 0 ≤ MlhLiabilityItem.includedAmount x := by
+          unfold MlhLiabilityItem.includedAmount APS210.nonNeg
+          split
+          · grind
+          · exact Rat.le_refl
+        exact Rat.add_nonneg hacc hx
+    exact hfold ls 0 Rat.le_refl
   have ht_assets : tenv.get "assets" = input.assets.map mlhAssetToRow := rfl
   have ht_liab : tenv.get "liabilities" = input.liabilities.map mlhLiabilityToRow := rfl
   dsimp only [out, evalProgram, mlhProgram]
   simp only [List.foldl_cons, List.foldl_nil, evalRel, evalRelWithEnv, List.append_nil, ht_assets, ht_liab, h_non2f, h_2f, h_liab]
   simp [evalSExpr, Row.get, Val.asRat, Val.asBool, h0, scalars, ref, evaluateMlh, checkRatio]
-  by_cases hle : (APS210.sumBy input.liabilities MlhLiabilityItem.includedAmount ≤ 0) <;>
-  simp [hle]
+  by_cases hle : (APS210.sumBy input.liabilities MlhLiabilityItem.includedAmount ≤ 0)
+  · have hzero : APS210.sumBy input.liabilities MlhLiabilityItem.includedAmount = 0 :=
+      Rat.le_antisymm hle (h_liab_nonneg input.liabilities)
+    simp [hzero]
+  · simp [hle]
 
 end Lean2Ibis.MLHSpec

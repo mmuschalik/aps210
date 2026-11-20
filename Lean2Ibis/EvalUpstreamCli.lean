@@ -4,6 +4,7 @@ import Lean2Ibis.UpstreamSpec
 
 open Lean (Json)
 open APS210.Upstream
+open APS210.Facts
 open Lean2Ibis
 open Lean2Ibis.UpstreamSpec
 
@@ -29,15 +30,52 @@ private def parseDate (j : Json) : Except String EpochDate := do
 private def getField (j : Json) (k : String) : Except String Json :=
   j.getObjVal? k
 
+/-- `{"valid_at": "YYYY-MM-DD", "known_at": <epoch seconds>, "source_reference": "..."}`. -/
+private def parseObservation (j : Json) : Except String ObservationContext := do
+  pure
+    { validAt := ← parseDate (← getField j "valid_at")
+    , knownAt := ← (← getField j "known_at").getInt?
+    , sourceReference := ← (← getField j "source_reference").getStr? }
+
+private def parseObs (j : Json) : Except String ObservationContext := do
+  parseObservation (← getField j "observation")
+
+/-- A reading: `{"known": v}`, `{"unknown": "why"}` or `{"refused": "why"}`. No other form is accepted. -/
+private def parseReading {α : Type} (j : Json) (f : Json → Except String α) : Except String (Reading α) :=
+  match j.getObjVal? "known", j.getObjVal? "unknown", j.getObjVal? "refused" with
+  | .ok v, _, _ => return .known (← f v)
+  | _, .ok r, _ => return .unknown (← r.getStr?)
+  | _, _, .ok r => return .refused (← r.getStr?)
+  | _, _, _ => throw s!"Expected a reading (known / unknown / refused), got: {j.compress}"
+
+private def parseSide (j : Json) : Except String Side := do
+  match ← j.getStr? with
+  | "we_owe" => pure .weOwe
+  | "owed_to_us" => pure .owedToUs
+  | s => throw s!"Unknown side: {s}"
+
+private def parseOption (j : Json) : Except String ContractOption := do
+  let holder ← match ← (← getField j "holder").getStr? with
+    | "us" => pure OptionHolder.us
+    | "counterparty" => pure OptionHolder.counterparty
+    | s => throw s!"Unknown option holder: {s}"
+  let kind ← match ← (← getField j "kind").getStr? with
+    | "early_redemption" => pure OptionKind.earlyRedemption
+    | "extension" => pure OptionKind.extension
+    | s => throw s!"Unknown option kind: {s}"
+  pure
+    { holder, kind
+    , exerciseDate := ← parseDate (← getField j "exercise_date")
+    , resultingSettlementDate := ← parseDate (← getField j "resulting_date") }
+
 private def parsePosition (j : Json) : Except String PositionRow := do
   pure
     { id := ← (← getField j "id").getStr?
+    , side := ← parseSide (← getField j "side")
     , amount := ← parseRat (← getField j "amount")
     , maturityDate := ← parseDate (← getField j "maturity_date")
-    , earliestCallDate := ← parseDate (← getField j "earliest_call_date")
-    , hasCallOption := ← (← getField j "has_call_option").getBool?
-    , latestExtensionDate := ← parseDate (← getField j "latest_extension_date")
-    , hasExtensionOption := ← (← getField j "has_extension_option").getBool?
+    , options := ← parseReading (← getField j "options") (fun a => do (← a.getArr?).toList.mapM parseOption)
+    , observation := ← parseObs j
     , noticeDays := ← parseRat (← getField j "notice_days")
     , encumbranceEndDate := ← parseDate (← getField j "encumbrance_end_date")
     , isEncumbered := ← (← getField j "is_encumbered").getBool?
@@ -50,6 +88,7 @@ private def parseDerivative (j : Json) : Except String DerivativeTrade := do
     , hasEligibleMna := ← (← getField j "has_eligible_mna").getBool?
     , mtmPayable := ← parseRat (← getField j "mtm_payable")
     , mtmReceivable := ← parseRat (← getField j "mtm_receivable")
+    , observation := ← parseObs j
     }
 
 private def parseCustomerType (s : String) : Except String DepositCustomerType :=
@@ -70,6 +109,7 @@ private def parseDeposit (j : Json) : Except String DepositAccount := do
     , balance := ← parseRat (← getField j "balance")
     , hasEarlyWithdrawalNoPenalty := ← (← getField j "has_early_withdrawal_no_penalty").getBool?
     , residualDays := ← parseRat (← getField j "residual_days")
+    , observation := ← parseObs j
     }
 
 private def parseCcyHqla1 (j : Json) : Except String CcyHqla1Position := do
@@ -77,24 +117,28 @@ private def parseCcyHqla1 (j : Json) : Except String CcyHqla1Position := do
     { currency := ← (← getField j "currency").getStr?
     , hqla1ForeignSovAmt := ← parseRat (← getField j "hqla1_foreign_sov_amt")
     , ccyNetOutflow := ← parseRat (← getField j "ccy_net_outflow")
+    , observation := ← parseObs j
     }
 
 private def parseCollateralFlow (j : Json) : Except String DailyCollateralFlow := do
   pure
     { valuationDate := ← parseDate (← getField j "valuation_date")
     , netCollateralFlow := ← parseRat (← getField j "net_collateral_flow")
+    , observation := ← parseObs j
     }
 
 private def parseMonthlyOutflow (j : Json) : Except String MonthlyNetOutflow := do
   pure
     { monthEndDate := ← parseDate (← getField j "month_end_date")
     , netCashOutflow := ← parseRat (← getField j "net_cash_outflow")
+    , observation := ← parseObs j
     }
 
 private def parseEcaiAssessment (j : Json) : Except String EcaiAssessmentRow := do
   pure
     { exposureId := ← (← getField j "exposure_id").getStr?
     , ratingStr := ← (← getField j "rating_str").getStr?
+    , observation := ← parseObs j
     }
 
 private def parseAmortCashflow (j : Json) : Except String AmortisationCashflowRow := do
@@ -102,6 +146,7 @@ private def parseAmortCashflow (j : Json) : Except String AmortisationCashflowRo
     { loanId := ← (← getField j "loan_id").getStr?
     , paymentDate := ← parseDate (← getField j "payment_date")
     , principalAmount := ← parseRat (← getField j "principal_amount")
+    , observation := ← parseObs j
     }
 
 private def parseSftLeg (j : Json) : Except String SftLegRow := do
@@ -114,6 +159,7 @@ private def parseSftLeg (j : Json) : Except String SftLegRow := do
     , hqla1Delta := ← parseRat (← getField j "hqla1_delta")
     , hqla2aDelta := ← parseRat (← getField j "hqla2a_delta")
     , hqla2bDelta := ← parseRat (← getField j "hqla2b_delta")
+    , observation := ← parseObs j
     }
 
 private def parseClf (j : Json) : Except String ClfSummaryInput := do
@@ -123,18 +169,16 @@ private def parseClf (j : Json) : Except String ClfSummaryInput := do
     , pledgedZeroRunoff := ← parseRat (← getField j "pledged_zero_runoff")
     , receivedZeroInflow := ← parseRat (← getField j "received_zero_inflow")
     , collateralAfterMargin := ← parseRat (← getField j "collateral_after_margin")
-    , recentlyIneligibleCollateralAfterMargin :=
-        match getField j "recently_ineligible_collateral_after_margin" with
-        | .ok v => ← parseRat v
-        | .error _ => 0
+    , recentlyIneligibleCollateralAfterMargin := ← parseRat (← getField j "recently_ineligible_collateral_after_margin")
     , collateralDiversified := ← (← getField j "collateral_diversified").getBool?
     , annualReapprovalCurrent := ← (← getField j "annual_reapproval_current").getBool?
     , includedInFundingStrategy := ← (← getField j "included_in_funding_strategy").getBool?
     , balanceSheetEffortsExhausted := ← (← getField j "balance_sheet_efforts_exhausted").getBool?
     , clfDrawnNonIntraday := ← (← getField j "clf_drawn_non_intraday").getBool?
     , drawdownAttestedAndNotifiedToApra := ← (← getField j "drawdown_attested_notified").getBool?
-    , collateralBecameIneligibleWithin30Days := ← (← getField j "collateral_became_ineligible_30d").getBool?
-    , collateralDaysSinceIneligible := (← (← getField j "collateral_days_since_ineligible").getNat?)
+    , collateralOperationalMet := ← parseReading (← getField j "collateral_operational_met") (·.getBool?)
+    , recentlyIneligibleCollateralDays := ← parseReading (← getField j "recently_ineligible_days") (·.getNat?)
+    , observation := ← parseObs j
     }
 
 private def parseArr {α : Type} (j : Json) (k : String) (f : Json → Except String α) : Except String (List α) := do
@@ -143,7 +187,7 @@ private def parseArr {α : Type} (j : Json) (k : String) (f : Json → Except St
 
 private def parseInput (j : Json) : Except String UpstreamInput := do
   pure
-    { reportingDate := ← parseDate (← getField j "reporting_date")
+    { asOf := ← parseObservation (← getField j "as_of")
     , isAudOnly := ← (← getField j "is_aud_only").getBool?
     , positions := ← parseArr j "positions" parsePosition
     , derivativeTrades := ← parseArr j "derivative_trades" parseDerivative

@@ -59,6 +59,7 @@ def table3ToStr : Table3OutflowCategory → String
   | .affiliatedDealerOrMarketMaker _ => "affiliated_dealer_or_market_maker"
   | .otherNonContractualContingent _ => "other_non_contractual_contingent"
   | .collateralSwapApraMethod => "collateral_swap_apra_method"
+  | .forwardStartingLending _ => "forward_starting_lending"
   | .otherContractualCashOutflows => "other_contractual_cash_outflows"
 
 def inflowCategoryToStr : InflowCategory → String
@@ -108,51 +109,67 @@ def hqlaValueAfterHaircutExpr : SExpr :=
     , ("hqla2b_corporate_debt", .litRat 20 100)
     , ("hqla2b_equity", .litRat 40 100) ]
     (.litRat 1 1)
+  -- Paras 10 & 12: HQLA2 needs both stress observations known and within the limit.
   let stressOk := .binOp .or
     (.binOp .eq (.col "category") (.litStr "hqla1"))
     (.binOp .and
-      (.binOp .le (.unOp .nonNeg (.col "max_30d_price_decline")) stressLimit)
-      (.binOp .le (.unOp .nonNeg (.col "max_30d_haircut_increase")) stressLimit))
-  let graceOk := .binOp .and (.col "became_ineligible_within_30_days")
+      (.binOp .and (.col "price_decline_known") (.col "haircut_increase_known"))
+      (.binOp .and
+        (.binOp .le (.col "max_30d_price_decline") stressLimit)
+        (.binOp .le (.col "max_30d_haircut_increase") stressLimit)))
+  -- Para 25: once an asset becomes ineligible (`ineligible_days_known = true`), it may only remain
+  -- in HQLA during the 30-day grace period (`days_since_ineligible <= 30`).
+  -- Paras 9, 10, 12, 28: regulator recognition required for HQLA2A/2B/host ALA, not domestic HQLA1.
+  let graceOk := .binOp .and (.col "ineligible_days_known")
     (.binOp .le (.col "days_since_ineligible") (.litRat 30 1))
+  let regOk := .binOp .or
+    (.binOp .and (.binOp .eq (.col "category") (.litStr "hqla1")) (.unOp .not (.col "is_host_recognised_ala")))
+    (.col "recognised_by_regulator")
   let eligOk := .binOp .or
-    (.binOp .and (.col "issuer_restriction_satisfied") (.col "recognised_by_regulator"))
+    (.binOp .and (.unOp .not (.col "ineligible_days_known"))
+      (.binOp .and (.col "issuer_restriction_satisfied") (.binOp .and regOk stressOk)))
     graceOk
-  let ok := .binOp .and opOk (.binOp .and eligOk (.binOp .and basisOk (.binOp .and divOk stressOk)))
+  let ok := .binOp .and opOk (.binOp .and eligOk (.binOp .and basisOk divOk))
   let mv := .unOp .nonNeg (.col "market_value")
-  let cappedMv := .ite
-    (.binOp .and (.var "is_level2") (.unOp .not (.col "freely_transferable_at_level2")))
-    (.binOp .min mv (.unOp .nonNeg (.col "level2_transferable_cap")))
-    mv
-  .ite ok (.binOp .mul cappedMv hqlaWeightExpr) (.litRat 0 1)
+  .ite ok (.binOp .mul mv hqlaWeightExpr) (.litRat 0 1)
 
-/-- Attachment A, Tables 1 & 2: Retail deposit outflow expression (with `$250k` / `guarantee_limit` split). -/
+/-- Attachment A, Paragraph 29: whether an asset is subject to its group's Level 2 cap. -/
+def level2RestrictedExpr : SExpr :=
+  .binOp .and (.var "is_level2") (.unOp .not (.col "freely_transferable_at_level2"))
+
+/-- Attachment A, Tables 1 & 2 & APG 210: Retail deposit outflow expression. Expects the customer's
+    aggregate balance `cust_total` and lowest guarantee limit `cust_limit` joined onto each row. Scorecard
+    criteria are reading columns ("true", "false", "unknown", "refused"); anything but "false" scores. -/
 def retailOutflowExpr : SExpr :=
   let bal := .unOp .nonNeg (.col "balance")
-  let lim := .unOp .nonNeg (.col "guarantee_limit")
+  let total := .col "cust_total"
+  let lim := .col "cust_limit"
+  let scored (c : String) (pts : Nat) : SExpr :=
+    .ite (.binOp .ne (.col c) (.litStr "false")) (.litRat pts 1) (.litRat 0 1)
   let baseScore :=
-    .binOp .add
-      (.ite (.col "is_online_account") (.litRat 2 1) (.litRat 0 1))
-      (.binOp .add
-        (.ite (.col "no_established_relationship") (.litRat 1 1) (.litRat 0 1))
-        (.ite (.col "is_heavily_rate_driven") (.litRat 1 1) (.litRat 0 1)))
-  let excessScore := .binOp .add (.litRat 2 1) baseScore
-  let excessRate := .ite (.binOp .le excessScore (.litRat 2 1)) (.litRat 10 100) (.litRat 25 100)
-  let effScore := .binOp .add
-    (.ite (.binOp .or (.col "above_guarantee_limit_or_250k") (.binOp .gt bal lim))
-      (.litRat 2 1) (.litRat 0 1))
-    baseScore
-  let lessStableRate := .ite (.binOp .le effScore (.litRat 2 1)) (.litRat 10 100) (.litRat 25 100)
+    .binOp .add (scored "is_online_account" 2)
+      (.binOp .add (scored "no_established_relationship" 1) (scored "is_heavily_rate_driven" 1))
+  let rateFor (score : SExpr) : SExpr :=
+    .ite (.binOp .le score (.litRat 2 1)) (.litRat 10 100) (.litRat 25 100)
+  let scorecardThreshold := .ite (.binOp .gt lim (.litRat 0 1)) lim (.litRat 250000 1)
+  let excessRate := rateFor (.binOp .add (.litRat 2 1) baseScore)
+  let lessStableRate := rateFor (.binOp .add (.ite (.binOp .gt total scorecardThreshold) (.litRat 2 1) (.litRat 0 1)) baseScore)
+  let insured := .ite (.binOp .le total (.litRat 0 1)) (.litRat 0 1)
+    (.binOp .div (.binOp .mul bal (.binOp .min total lim)) total)
   let stableOutflow :=
     .binOp .add
-      (.binOp .mul (.binOp .min bal lim) (.litRat 5 100))
-      (.binOp .mul (.unOp .nonNeg (.binOp .sub bal lim)) excessRate)
+      (.binOp .mul insured (.litRat 5 100))
+      (.binOp .mul (.unOp .nonNeg (.binOp .sub bal insured)) excessRate)
   let excludedTerm := .binOp .and (.unOp .not (.col "notice_deposit_called"))
     (.binOp .and (.col "residual_maturity_or_notice_gt_30d")
       (.binOp .and (.col "no_withdrawal_right_or_material_penalty")
         (.unOp .not (.col "category_tainted_by_early_withdrawal"))))
+  let excludedWholesaleTerm := .binOp .and (.unOp .not (.col "notice_deposit_called"))
+    (.binOp .and (.col "residual_maturity_or_notice_gt_30d")
+      (.binOp .and (.col "no_legal_withdrawal_right_within_30d")
+        (.unOp .not (.col "category_tainted_by_early_withdrawal"))))
   .ite (.binOp .and (.col "is_intermediated") (.unOp .not (.col "intermediated_look_through_met")))
-    (.ite excludedTerm (.litRat 0 1) bal)
+    (.ite excludedWholesaleTerm (.litRat 0 1) bal)
     (.ite (.col "notice_deposit_called")
       bal
       (.ite excludedTerm
@@ -210,16 +227,26 @@ def table3RateExpr : SExpr :=
     , ("affiliated_dealer_or_market_maker", .unOp .nonNeg (.col "custom_rate"))
     , ("other_non_contractual_contingent", .unOp .nonNeg (.col "custom_rate"))
     , ("collateral_swap_apra_method", .litRat 1 1)
+    , ("forward_starting_lending", .litRat 1 1)
     , ("other_contractual_cash_outflows", .litRat 1 1) ]
     (.litRat 0 1)
 
 def table3OutflowExpr : SExpr :=
   .ite
     (.binOp .and
-      (.binOp .eq (.col "category") (.litStr "derivative_valuation_largest_30d_flow_24m"))
-      (.col "has_apra_alt_amount"))
-    (.unOp .nonNeg (.col "apra_alt_amount"))
-    (.binOp .mul (.unOp .nonNeg (.col "amount")) table3RateExpr)
+      (.binOp .eq (.col "category") (.litStr "secured_by_clf_eligible_within_limit"))
+      (.unOp .not (.binOp .and (.var "is_locally_incorporated") (.binOp .gt (.var "clf_recognised") (.litRat 0 1)))))
+    (.unOp .nonNeg (.col "amount"))
+    (.ite
+      (.binOp .and
+        (.binOp .eq (.col "category") (.litStr "derivative_valuation_largest_30d_flow_24m"))
+        (.col "has_apra_alt_amount"))
+      (.unOp .nonNeg (.col "apra_alt_amount"))
+      (.ite (.binOp .eq (.col "category") (.litStr "forward_starting_lending"))
+        (.binOp .mul
+          (.unOp .nonNeg (.binOp .sub (.unOp .nonNeg (.col "amount")) (.unOp .nonNeg (.col "rollover_assumed"))))
+          table3RateExpr)
+        (.binOp .mul (.unOp .nonNeg (.col "amount")) table3RateExpr)))
 
 /-- Attachment A, Table 4 & Paragraphs 54–66: Cash inflow expression. -/
 def inflowRateExpr : SExpr :=
@@ -245,7 +272,7 @@ def inflowRateExpr : SExpr :=
     (.litRat 0 1)
 
 def inflowAmountExpr : SExpr :=
-  let ok := .binOp .and (.col "is_fully_performing") (.unOp .not (.col "counted_in_hqla"))
+  let ok := .binOp .and (.binOp .eq (.col "is_fully_performing") (.litStr "true")) (.unOp .not (.col "counted_in_hqla"))
   .ite ok (.binOp .mul (.unOp .nonNeg (.col "amount")) inflowRateExpr) (.litRat 0 1)
 
 /-- Complete LCR program in the Lean-to-Ibis IR (including AUD filtering, SFT unwinds,
@@ -253,13 +280,59 @@ def inflowAmountExpr : SExpr :=
 def lcrProgram : Program :=
   let audFilter (tbl : RelExpr) :=
     .filter (.binOp .or (.unOp .not (.var "is_aud_only")) (.binOp .eq (.col "currency") (.litStr "AUD"))) tbl
+  let hqlaPre := .withColumns [("val_pre", hqlaValueAfterHaircutExpr)] (audFilter (.table "hqla_assets"))
+  -- Para 29: one cap per Level 2 transfer group, applied to the group total and allocated pro rata.
+  let groupTotals :=
+    .groupBy ["level2_transfer_group"] [("grp_total", .sum, .col "val_pre")] (.filter level2RestrictedExpr hqlaPre)
+  let groupCaps :=
+    .groupBy ["level2_transfer_group"] [("grp_cap", .min, .unOp .nonNeg (.col "cap"))] (.table "level2_transferable_caps")
+  let groupScale :=
+    .withColumns
+      [("grp_scale", .ite (.binOp .le (.col "grp_total") (.litRat 0 1)) (.litRat 0 1)
+          (.binOp .min (.litRat 1 1) (.binOp .div (.coalesceZero (.col "grp_cap")) (.col "grp_total"))))]
+      (.leftJoin "level2_transfer_group" groupTotals groupCaps)
+  let hqlaScaled :=
+    .withColumns
+      [("val", .ite level2RestrictedExpr (.binOp .mul (.col "val_pre") (.coalesceZero (.col "grp_scale"))) (.col "val_pre"))]
+      (.leftJoin "level2_transfer_group" hqlaPre groupScale)
   let para9eRel :=
-    .withColumns [("val", hqlaValueAfterHaircutExpr)]
-      (.filter
-        (.binOp .and
-          (.binOp .eq (.col "category") (.litStr "hqla1"))
-          (.col "is_non_zero_rw_foreign_sov_in_foreign_currency"))
-        (audFilter (.table "hqla_assets")))
+    .filter
+      (.binOp .and
+        (.binOp .eq (.col "category") (.litStr "hqla1"))
+        (.col "is_non_zero_rw_foreign_sov_in_foreign_currency"))
+      hqlaScaled
+  -- APG 210 / Att A Paras 35 & 37: per-(customer_id, currency) guarantee aggregation,
+  -- excluding non-look-through intermediated deposits (FI wholesale deposits).
+  let retailRel := audFilter (.table "retail_deposits")
+  let retailGenuineRel :=
+    .filter (.unOp .not (.binOp .and (.col "is_intermediated") (.unOp .not (.col "intermediated_look_through_met"))))
+      retailRel
+  let customerAgg :=
+    .groupBy ["customer_id", "currency"]
+      [("cust_total", .sum, .unOp .nonNeg (.col "balance")), ("cust_limit", .min, .unOp .nonNeg (.col "guarantee_limit"))]
+      retailGenuineRel
+  -- AUD-only subset for Para 14 CLF shortfall cap in All-Currencies LCR.
+  let audHqlaPre := .withColumns [("val_pre", hqlaValueAfterHaircutExpr)]
+    (.filter (.binOp .eq (.col "currency") (.litStr "AUD")) (.table "hqla_assets"))
+  let audGroupTotals :=
+    .groupBy ["level2_transfer_group"] [("grp_total", .sum, .col "val_pre")] (.filter level2RestrictedExpr audHqlaPre)
+  let audGroupScale :=
+    .withColumns
+      [("grp_scale", .ite (.binOp .le (.col "grp_total") (.litRat 0 1)) (.litRat 0 1)
+          (.binOp .min (.litRat 1 1) (.binOp .div (.coalesceZero (.col "grp_cap")) (.col "grp_total"))))]
+      (.leftJoin "level2_transfer_group" audGroupTotals groupCaps)
+  let audHqlaScaled :=
+    .withColumns
+      [("val", .ite level2RestrictedExpr (.binOp .mul (.col "val_pre") (.coalesceZero (.col "grp_scale"))) (.col "val_pre"))]
+      (.leftJoin "level2_transfer_group" audHqlaPre audGroupScale)
+  let audRetailRel := .filter (.binOp .eq (.col "currency") (.litStr "AUD")) (.table "retail_deposits")
+  let audRetailGenuineRel :=
+    .filter (.unOp .not (.binOp .and (.col "is_intermediated") (.unOp .not (.col "intermediated_look_through_met"))))
+      audRetailRel
+  let audCustomerAgg :=
+    .groupBy ["customer_id", "currency"]
+      [("cust_total", .sum, .unOp .nonNeg (.col "balance")), ("cust_limit", .min, .unOp .nonNeg (.col "guarantee_limit"))]
+      audRetailGenuineRel
   let para9eGrouped :=
     .groupBy ["currency"] [("cur_total", .sum, .col "val")] para9eRel
   let capsDedup :=
@@ -273,17 +346,21 @@ def lcrProgram : Program :=
       [ ("hqla_assets", ["category", "currency", "market_value", "convertible_to_cash_anytime",
           "unencumbered_and_controlled", "control_evidenced", "not_pledged_or_operational_cost",
           "not_rehypothecated_if_received_in_sft", "freely_transferable_at_level2",
-          "level2_transferable_cap", "is_host_recognised_ala", "issuer_restriction_satisfied",
-          "recognised_by_regulator", "became_ineligible_within_30_days", "days_since_ineligible",
-          "hqla2a_diversified", "max_30d_price_decline", "max_30d_haircut_increase",
+          "level2_transfer_group", "is_host_recognised_ala", "issuer_restriction_satisfied",
+          "recognised_by_regulator", "ineligible_days_known", "days_since_ineligible",
+          "hqla2a_diversified", "price_decline_known", "max_30d_price_decline",
+          "haircut_increase_known", "max_30d_haircut_increase",
           "is_non_zero_rw_foreign_sov_in_foreign_currency"])
-      , ("retail_deposits", ["currency", "balance", "guarantee_limit", "is_intermediated",
+      , ("level2_transferable_caps", ["level2_transfer_group", "cap"])
+      , ("retail_deposits", ["customer_id", "currency", "balance", "guarantee_limit", "is_intermediated",
           "intermediated_look_through_met", "notice_deposit_called",
           "residual_maturity_or_notice_gt_30d", "no_withdrawal_right_or_material_penalty",
+          "no_legal_withdrawal_right_within_30d",
           "category_tainted_by_early_withdrawal", "host_jurisdiction_applies_basel", "has_host_override",
-          "host_override_rate", "is_stable", "above_guarantee_limit_or_250k",
+          "host_override_rate", "is_stable",
           "is_online_account", "no_established_relationship", "is_heavily_rate_driven"])
-      , ("other_outflows", ["category", "currency", "amount", "custom_rate", "has_apra_alt_amount", "apra_alt_amount"])
+      , ("other_outflows", ["category", "currency", "amount", "custom_rate", "has_apra_alt_amount", "apra_alt_amount",
+          "rollover_assumed"])
       , ("inflows", ["category", "currency", "amount", "is_fully_performing", "counted_in_hqla"])
       , ("foreign_sov_currency_caps", ["currency", "cap"]) ]
     scalarParams :=
@@ -299,34 +376,98 @@ def lcrProgram : Program :=
             (.binOp .and
               (.binOp .eq (.col "category") (.litStr "hqla1"))
               (.unOp .not (.col "is_non_zero_rw_foreign_sov_in_foreign_currency")))
-            (audFilter (.table "hqla_assets")))
-          hqlaValueAfterHaircutExpr)
+            hqlaScaled)
+          (.col "val"))
       , ("capped_para9e_hqla1", .agg .sum para9eJoined (.col "capped_val"))
       , ("unadj_hqla1", .scalar (.binOp .add (.col "standard_hqla1") (.col "capped_para9e_hqla1")))
       , ("unadj_hqla2a", .agg .sum
-          (.filter (.binOp .eq (.col "category") (.litStr "hqla2a")) (audFilter (.table "hqla_assets")))
-          hqlaValueAfterHaircutExpr)
+          (.filter (.binOp .eq (.col "category") (.litStr "hqla2a")) hqlaScaled)
+          (.col "val"))
       , ("unadj_hqla2b", .agg .sum
           (.filter (.binOp .or (.binOp .eq (.col "category") (.litStr "hqla2b_rmbs"))
             (.binOp .or (.binOp .eq (.col "category") (.litStr "hqla2b_corporate_debt"))
               (.binOp .eq (.col "category") (.litStr "hqla2b_equity"))))
-            (audFilter (.table "hqla_assets")))
-          hqlaValueAfterHaircutExpr)
+            hqlaScaled)
+          (.col "val"))
       , ("adj1", .scalar (.unOp .nonNeg (.binOp .add (.col "unadj_hqla1") (.col "delta_hqla1"))))
       , ("adj2a", .scalar (.unOp .nonNeg (.binOp .add (.col "unadj_hqla2a") (.col "delta_hqla2a"))))
       , ("adj2b", .scalar (.unOp .nonNeg (.binOp .add (.col "unadj_hqla2b") (.col "delta_hqla2b"))))
-      , ("excess_15", .scalar (.unOp .nonNeg (.binOp .sub (.col "adj2b")
-          (.binOp .mul (.litRat 15 85) (.binOp .add (.col "adj1") (.col "adj2a"))))))
-      , ("excess_40", .scalar (.unOp .nonNeg (.binOp .sub
-          (.binOp .add (.col "adj2a") (.binOp .sub (.col "adj2b") (.col "excess_15")))
+      , ("unadj_excess_15", .scalar (.unOp .nonNeg (.binOp .sub (.col "unadj_hqla2b")
+          (.binOp .min
+            (.binOp .mul (.litRat 15 85) (.binOp .add (.col "unadj_hqla1") (.col "unadj_hqla2a")))
+            (.binOp .mul (.litRat 1 4) (.col "unadj_hqla1"))))))
+      , ("unadj_excess_40", .scalar (.unOp .nonNeg (.binOp .sub
+          (.binOp .add (.col "unadj_hqla2a") (.binOp .sub (.col "unadj_hqla2b") (.col "unadj_excess_15")))
+          (.binOp .mul (.litRat 2 3) (.col "unadj_hqla1")))))
+      , ("adj_excess_15", .scalar (.unOp .nonNeg (.binOp .sub (.col "adj2b")
+          (.binOp .min
+            (.binOp .mul (.litRat 15 85) (.binOp .add (.col "adj1") (.col "adj2a")))
+            (.binOp .mul (.litRat 1 4) (.col "adj1"))))))
+      , ("adj_excess_40", .scalar (.unOp .nonNeg (.binOp .sub
+          (.binOp .add (.col "adj2a") (.binOp .sub (.col "adj2b") (.col "adj_excess_15")))
           (.binOp .mul (.litRat 2 3) (.col "adj1")))))
+      , ("total_excess", .scalar (.binOp .max
+          (.binOp .add (.col "unadj_excess_15") (.col "unadj_excess_40"))
+          (.binOp .add (.col "adj_excess_15") (.col "adj_excess_40"))))
       , ("stock_ex_clf", .scalar (.unOp .nonNeg (.binOp .sub
           (.binOp .add (.col "unadj_hqla1") (.binOp .add (.col "unadj_hqla2a") (.col "unadj_hqla2b")))
-          (.binOp .add (.col "excess_15") (.col "excess_40")))))
-      , ("eff_clf_recognised", .scalar (.ite (.binOp .and (.var "is_locally_incorporated") (.var "is_aud_only"))
-          (.unOp .nonNeg (.col "clf_recognised")) (.litRat 0 1)))
+          (.col "total_excess"))))
+      -- AUD-only stock & NCO for Para 14 CLF shortfall cap in All-Currencies LCR
+      , ("aud_unadj_hqla1", .agg .sum
+          (.filter
+            (.binOp .and
+              (.binOp .eq (.col "category") (.litStr "hqla1"))
+              (.unOp .not (.col "is_non_zero_rw_foreign_sov_in_foreign_currency")))
+            audHqlaScaled)
+          (.col "val"))
+      , ("aud_unadj_hqla2a", .agg .sum
+          (.filter (.binOp .eq (.col "category") (.litStr "hqla2a")) audHqlaScaled)
+          (.col "val"))
+      , ("aud_unadj_hqla2b", .agg .sum
+          (.filter (.binOp .or (.binOp .eq (.col "category") (.litStr "hqla2b_rmbs"))
+            (.binOp .or (.binOp .eq (.col "category") (.litStr "hqla2b_corporate_debt"))
+              (.binOp .eq (.col "category") (.litStr "hqla2b_equity"))))
+            audHqlaScaled)
+          (.col "val"))
+      , ("aud_unadj_excess_15", .scalar (.unOp .nonNeg (.binOp .sub (.col "aud_unadj_hqla2b")
+          (.binOp .min
+            (.binOp .mul (.litRat 15 85) (.binOp .add (.col "aud_unadj_hqla1") (.col "aud_unadj_hqla2a")))
+            (.binOp .mul (.litRat 1 4) (.col "aud_unadj_hqla1"))))))
+      , ("aud_unadj_excess_40", .scalar (.unOp .nonNeg (.binOp .sub
+          (.binOp .add (.col "aud_unadj_hqla2a") (.binOp .sub (.col "aud_unadj_hqla2b") (.col "aud_unadj_excess_15")))
+          (.binOp .mul (.litRat 2 3) (.col "aud_unadj_hqla1")))))
+      , ("aud_adj1", .scalar (.unOp .nonNeg (.binOp .add (.col "aud_unadj_hqla1") (.col "delta_hqla1"))))
+      , ("aud_adj2a", .scalar (.unOp .nonNeg (.binOp .add (.col "aud_unadj_hqla2a") (.col "delta_hqla2a"))))
+      , ("aud_adj2b", .scalar (.unOp .nonNeg (.binOp .add (.col "aud_unadj_hqla2b") (.col "delta_hqla2b"))))
+      , ("aud_adj_excess_15", .scalar (.unOp .nonNeg (.binOp .sub (.col "aud_adj2b")
+          (.binOp .min
+            (.binOp .mul (.litRat 15 85) (.binOp .add (.col "aud_adj1") (.col "aud_adj2a")))
+            (.binOp .mul (.litRat 1 4) (.col "aud_adj1"))))))
+      , ("aud_adj_excess_40", .scalar (.unOp .nonNeg (.binOp .sub
+          (.binOp .add (.col "aud_adj2a") (.binOp .sub (.col "aud_adj2b") (.col "aud_adj_excess_15")))
+          (.binOp .mul (.litRat 2 3) (.col "aud_adj1")))))
+      , ("aud_total_excess", .scalar (.binOp .max
+          (.binOp .add (.col "aud_unadj_excess_15") (.col "aud_unadj_excess_40"))
+          (.binOp .add (.col "aud_adj_excess_15") (.col "aud_adj_excess_40"))))
+      , ("aud_stock_ex_clf", .scalar (.unOp .nonNeg (.binOp .sub
+          (.binOp .add (.col "aud_unadj_hqla1") (.binOp .add (.col "aud_unadj_hqla2a") (.col "aud_unadj_hqla2b")))
+          (.col "aud_total_excess"))))
+      , ("aud_retail_out", .agg .sum (.leftJoinOn ["customer_id", "currency"] audRetailRel audCustomerAgg) retailOutflowExpr)
+      , ("aud_other_out", .agg .sum (.filter (.binOp .eq (.col "currency") (.litStr "AUD")) (.table "other_outflows")) table3OutflowExpr)
+      , ("aud_gross_outflows", .scalar (.binOp .add (.col "aud_retail_out") (.col "aud_other_out")))
+      , ("aud_gross_inflows", .agg .sum (.filter (.binOp .eq (.col "currency") (.litStr "AUD")) (.table "inflows")) inflowAmountExpr)
+      , ("aud_effective_inflow_cap", .scalar (.binOp .mul (.litRat 75 100) (.col "aud_gross_outflows")))
+      , ("aud_capped_inflows", .scalar (.binOp .min (.col "aud_gross_inflows") (.col "aud_effective_inflow_cap")))
+      , ("aud_net_cash_outflows", .scalar (.unOp .nonNeg (.binOp .sub (.col "aud_gross_outflows") (.col "aud_capped_inflows"))))
+      , ("aud_shortfall", .scalar (.unOp .nonNeg
+          (.binOp .sub (.col "aud_net_cash_outflows") (.col "aud_stock_ex_clf"))))
+      , ("eff_clf_recognised", .scalar (.ite (.var "is_locally_incorporated")
+          (.ite (.var "is_aud_only")
+            (.unOp .nonNeg (.col "clf_recognised"))
+            (.binOp .min (.unOp .nonNeg (.col "clf_recognised")) (.col "aud_shortfall")))
+          (.litRat 0 1)))
       , ("stock_of_hqla", .scalar (.binOp .add (.col "stock_ex_clf") (.col "eff_clf_recognised")))
-      , ("retail_out", .agg .sum (audFilter (.table "retail_deposits")) retailOutflowExpr)
+      , ("retail_out", .agg .sum (.leftJoinOn ["customer_id", "currency"] retailRel customerAgg) retailOutflowExpr)
       , ("other_out", .agg .sum (audFilter (.table "other_outflows")) table3OutflowExpr)
       , ("gross_outflows", .scalar (.binOp .add (.col "retail_out") (.col "other_out")))
       , ("gross_inflows", .agg .sum (audFilter (.table "inflows")) inflowAmountExpr)
@@ -343,7 +484,7 @@ def lcrProgram : Program :=
       , ("lcr_numerator", .scalar (.binOp .add (.col "stock_of_hqla") (.col "ho_facility_recognised")))
       , ("compliant", .scalar
           (.ite (.binOp .le (.col "net_cash_outflows") (.litRat 0 1))
-            (.binOp .le (.litRat 0 1) (.col "lcr_numerator"))
+            (.binOp .lt (.litRat 0 1) (.col "lcr_numerator"))
             (.binOp .le (.binOp .mul (.col "required_min_rate") (.col "net_cash_outflows")) (.col "lcr_numerator"))))
       , ("buffer_met", .scalar
           (.binOp .ge (.col "lcr_numerator")

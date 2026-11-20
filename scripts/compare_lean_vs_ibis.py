@@ -12,44 +12,67 @@ from fractions import Fraction
 from pathlib import Path
 
 import ibis
+import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "generated"))
+sys.path.insert(0, str(ROOT / "scripts"))
 from aps210_upstream_ibis import evaluate_aps210_upstream
+from verify_upstream_ibis import SCHEMAS as UPSTREAM_SCHEMAS
 
 
 def generate_dataset(seed: int) -> dict:
     rng = random.Random(seed)
     reporting_date = datetime.date(2026, 6, 30)
 
+    observation = {
+        "valid_at": reporting_date.isoformat(),
+        "known_at": int(datetime.datetime(2026, 7, 2, tzinfo=datetime.UTC).timestamp()),
+        "source_reference": f"synthetic-seed-{seed}",
+    }
+
     positions = []
     for i in range(50):
         mat_offset = rng.randint(-10, 1200)
-        call_offset = (
-            rng.randint(5, max(5, mat_offset)) if mat_offset > 5 else mat_offset
-        )
-        ext_offset = mat_offset + rng.randint(30, 400)
+        options = []
+        for _ in range(rng.choice([0, 0, 1, 1, 2])):
+            kind = rng.choice(["early_redemption", "extension"])
+            res_offset = (
+                rng.randint(0, max(0, mat_offset))
+                if kind == "early_redemption"
+                else mat_offset + rng.randint(1, 400)
+            )
+            res_date = (
+                reporting_date + datetime.timedelta(days=res_offset)
+            ).isoformat()
+            options.append(
+                {
+                    "holder": rng.choice(["us", "counterparty"]),
+                    "kind": kind,
+                    "exercise_date": res_date,
+                    "resulting_date": res_date,
+                }
+            )
         enc_offset = rng.randint(10, 800)
         positions.append(
             {
                 "id": f"pos_{i:03d}",
+                "side": rng.choice(["we_owe", "owed_to_us"]),
                 "amount": rng.randint(10_000, 5_000_000),
                 "maturity_date": (
                     reporting_date + datetime.timedelta(days=mat_offset)
                 ).isoformat(),
-                "earliest_call_date": (
-                    reporting_date + datetime.timedelta(days=call_offset)
-                ).isoformat(),
-                "has_call_option": rng.random() < 0.35,
-                "latest_extension_date": (
-                    reporting_date + datetime.timedelta(days=ext_offset)
-                ).isoformat(),
-                "has_extension_option": rng.random() < 0.25,
+                "options": (
+                    {"known": options}
+                    if rng.random() < 0.85
+                    else {"unknown": "option schedule not loaded"}
+                ),
                 "notice_days": rng.choice([0, 0, 0, 14, 35, 90, 200, 400]),
                 "encumbrance_end_date": (
                     reporting_date + datetime.timedelta(days=enc_offset)
                 ).isoformat(),
                 "is_encumbered": rng.random() < 0.3,
+                "observation": observation,
             }
         )
 
@@ -165,25 +188,38 @@ def generate_dataset(seed: int) -> dict:
             }
         )
 
+    days_known = rng.random() < 0.7
     clf = {
         "approved_by_apra": rng.random() < 0.90,
         "contractual_amount": rng.randint(5_000_000, 25_000_000),
         "pledged_zero_runoff": rng.randint(0, 5_000_000),
         "received_zero_inflow": rng.randint(0, 3_000_000),
         "collateral_after_margin": rng.randint(5_000_000, 25_000_000),
-        "recently_ineligible_collateral_after_margin": 0,
+        "recently_ineligible_collateral_after_margin": rng.randint(0, 2_000_000),
         "collateral_diversified": rng.random() < 0.90,
         "annual_reapproval_current": rng.random() < 0.95,
         "included_in_funding_strategy": True,
         "balance_sheet_efforts_exhausted": True,
         "clf_drawn_non_intraday": False,
         "drawdown_attested_notified": False,
-        "collateral_became_ineligible_30d": False,
-        "collateral_days_since_ineligible": 0,
+        "collateral_operational_met": rng.choice(
+            [{"known": True}] * 6
+            + [
+                {"known": False},
+                {"unknown": "custody report missing"},
+                {"refused": "n/a"},
+            ]
+        ),
+        "recently_ineligible_days": (
+            {"known": rng.choice([0, 15, 30, 31, 60])}
+            if days_known
+            else {"unknown": "downgrade date not captured"}
+        ),
+        "observation": observation,
     }
 
-    return {
-        "reporting_date": reporting_date.isoformat(),
+    data = {
+        "as_of": observation,
         "is_aud_only": True,
         "positions": positions,
         "derivative_trades": derivative_trades,
@@ -196,73 +232,85 @@ def generate_dataset(seed: int) -> dict:
         "sft_legs": sft_legs,
         "clf": clf,
     }
+    # Every record carries its observation context (no defaults in the Lean CLI).
+    for key, rows in data.items():
+        if isinstance(rows, list) and key != "positions":
+            for row in rows:
+                row["observation"] = observation
+    return data
+
+
+def reading_str(r: dict) -> str:
+    """A reading as the IR's string column: "true" / "false" / "unknown" / "refused"."""
+    if "known" in r:
+        return "true" if r["known"] else "false"
+    return "unknown" if "unknown" in r else "refused"
 
 
 def run_ibis(data: dict) -> dict[str, Decimal]:
     con = ibis.duckdb.connect()
-    reporting_date = datetime.date.fromisoformat(data["reporting_date"])
+    reporting_date = datetime.date.fromisoformat(data["as_of"]["valid_at"])
 
-    def to_memtable(rows: list[dict], date_cols: set[str]) -> ibis.Table:
-        cols: dict[str, list] = {k: [] for k in rows[0]}
+    def cell(v, ty):
+        if ty == "date":
+            return datetime.date.fromisoformat(v)
+        if ty.startswith("decimal"):
+            return Decimal(v)
+        return v
+
+    def to_memtable(name: str, rows: list[dict]) -> ibis.Table:
+        schema = UPSTREAM_SCHEMAS[name]
         for r in rows:
-            for k, v in r.items():
-                if k in date_cols:
-                    cols[k].append(datetime.date.fromisoformat(v))
-                elif isinstance(v, int) and not isinstance(v, bool):
-                    cols[k].append(Decimal(v))
-                else:
-                    cols[k].append(v)
-        return ibis.memtable(cols)
+            missing = set(schema) - set(r)
+            assert not missing, f"{name}: missing {missing}"
+        return ibis.memtable(
+            pd.DataFrame(
+                [[cell(r[c], t) for c, t in schema.items()] for r in rows],
+                columns=list(schema),
+            ),
+            schema=ibis.schema(schema),
+        )
 
-    positions = to_memtable(
-        data["positions"],
-        {
-            "maturity_date",
-            "earliest_call_date",
-            "latest_extension_date",
-            "encumbrance_end_date",
+    positions = [
+        {**p, "options_known": "known" in p["options"]} for p in data["positions"]
+    ]
+    position_options = [
+        {"id": p["id"], **o}
+        for p in data["positions"]
+        for o in p["options"].get("known", [])
+    ]
+    tables = {
+        "positions": positions,
+        "position_options": position_options,
+        **{
+            name: data[name]
+            for name in UPSTREAM_SCHEMAS
+            if name not in ("positions", "position_options")
         },
-    )
-    derivative_trades = to_memtable(data["derivative_trades"], set())
-    deposit_accounts = to_memtable(data["deposit_accounts"], set())
-    ccy_hqla1_positions = to_memtable(data["ccy_hqla1_positions"], set())
-    daily_collateral_flows = to_memtable(
-        data["daily_collateral_flows"], {"valuation_date"}
-    )
-    monthly_net_outflows = to_memtable(data["monthly_net_outflows"], {"month_end_date"})
-    ecai_assessments = to_memtable(data["ecai_assessments"], set())
-    amortisation_cashflows = to_memtable(
-        data["amortisation_cashflows"], {"payment_date"}
-    )
-    sft_legs = to_memtable(data["sft_legs"], set())
+    }
     clf = data["clf"]
-
+    days = clf["recently_ineligible_days"]
     exprs = evaluate_aps210_upstream(
-        positions,
-        derivative_trades,
-        deposit_accounts,
-        ccy_hqla1_positions,
-        daily_collateral_flows,
-        monthly_net_outflows,
-        ecai_assessments,
-        amortisation_cashflows,
-        sft_legs,
-        reporting_date,
-        data["is_aud_only"],
-        clf["approved_by_apra"],
-        Decimal(clf["contractual_amount"]),
-        Decimal(clf["pledged_zero_runoff"]),
-        Decimal(clf["received_zero_inflow"]),
-        Decimal(clf["collateral_after_margin"]),
-        Decimal(clf["recently_ineligible_collateral_after_margin"]),
-        clf["collateral_diversified"],
-        clf["annual_reapproval_current"],
-        clf["included_in_funding_strategy"],
-        clf["balance_sheet_efforts_exhausted"],
-        clf["clf_drawn_non_intraday"],
-        clf["drawdown_attested_notified"],
-        clf["collateral_became_ineligible_30d"],
-        Decimal(clf["collateral_days_since_ineligible"]),
+        *[to_memtable(name, tables[name]) for name in UPSTREAM_SCHEMAS],
+        reporting_date=reporting_date,
+        is_aud_only=data["is_aud_only"],
+        clf_approved_by_apra=clf["approved_by_apra"],
+        clf_contractual=Decimal(clf["contractual_amount"]),
+        clf_pledged_zero_runoff=Decimal(clf["pledged_zero_runoff"]),
+        clf_received_zero_inflow=Decimal(clf["received_zero_inflow"]),
+        clf_collateral_after_margin=Decimal(clf["collateral_after_margin"]),
+        clf_recently_ineligible_collateral_after_margin=Decimal(
+            clf["recently_ineligible_collateral_after_margin"]
+        ),
+        clf_collateral_diversified=clf["collateral_diversified"],
+        clf_annual_reapproval_current=clf["annual_reapproval_current"],
+        clf_included_in_funding_strategy=clf["included_in_funding_strategy"],
+        clf_balance_sheet_efforts_exhausted=clf["balance_sheet_efforts_exhausted"],
+        clf_drawn_non_intraday=clf["clf_drawn_non_intraday"],
+        clf_drawdown_attested_notified=clf["drawdown_attested_notified"],
+        clf_collateral_operational_met=reading_str(clf["collateral_operational_met"]),
+        clf_recently_ineligible_days_known="known" in days,
+        clf_recently_ineligible_days=Decimal(days.get("known", 0)),
     )
     out: dict[str, Decimal | bool] = {}
     for k, v in exprs.items():

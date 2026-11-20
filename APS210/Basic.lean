@@ -107,12 +107,13 @@ structure RatioCheck where
   deriving DecidableEq, Repr
 
 /-- Evaluate `numerator / denominator >= requiredMinimum` without division-by-zero ambiguity.
-    When `denominator <= 0`, compliance holds iff `numerator >= 0` and `denominator = 0`
-    (zero net requirement covered by non-negative buffer), or `numerator >= requiredMinimum * denominator`. -/
+    When `denominator <= 0` the ratio is undefined: it is compliant only with a strictly positive
+    numerator, so an empty calculation (e.g. ASF = RSF = 0) is not compliant. Otherwise compliance is
+    `numerator >= requiredMinimum * denominator`. -/
 def checkRatio (numerator denominator : Money) (requiredMinimum : Rate) : RatioCheck :=
-  let ratio := if denominator == 0 then none else some (numerator / denominator)
+  let ratio := if denominator <= 0 then none else some (numerator / denominator)
   let compliant :=
-    if denominator <= 0 then numerator >= 0
+    if denominator <= 0 then denominator == 0 && numerator > 0
     else numerator >= requiredMinimum * denominator
   { numerator, denominator, requiredMinimum, ratio, compliant }
 

@@ -95,13 +95,16 @@ def bankOrNonZeroMdbRiskWeightPct
     | .grade6 => 150
     | .unrated => 50
 
-/-- APS 112 Attachment A: Standard residential property loan qualification
-    for <= 35% risk weight / NSFR 65% RSF (Attachment C para 35(a)). -/
+/-- APS 210 Attachment C, Paragraph 35(a) & APS 112: Standard residential property loan qualification
+    for NSFR 65% RSF. Per APRA Attachment C para 35(a), unencumbered standard residential property
+    loans to natural person(s) with residual maturity >= 1 year and LVR <= 80% (as defined under
+    APS 112) receive 65% RSF (para 35(a) is distinct from para 35(b)'s <= 35% RW test for other loans). -/
 structure StandardResidentialMortgageCriteria where
   toNaturalPerson : Bool
   isStandardLoanPerAps112 : Bool
   lvrPct : Rat
   residualMaturityOneYearOrMore : Bool
+  isOwnerOccupiedPrincipalAndInterest : Bool := true
   deriving DecidableEq, Repr
 
 def StandardResidentialMortgageCriteria.qualifiesFor65PctRsf
@@ -111,20 +114,23 @@ def StandardResidentialMortgageCriteria.qualifiesFor65PctRsf
   m.lvrPct <= 80 &&
   m.residualMaturityOneYearOrMore
 
-/-- APS 112 Attachment H, Paragraphs 9–11: Eligible bilateral netting contract criteria
-    for derivative replacement cost netting (APS 210 Attachment C paras 9 & 27). -/
+/-- APS 112 Attachment H, Paragraphs 9–11 & Basel III Leverage Ratio Annex paras 8–9:
+    Eligible bilateral netting contract criteria for derivative replacement cost netting
+    (APS 210 Attachment C paras 9 & 27). -/
 structure BilateralNettingAgreement where
   writtenAndLegallyEnforceable : Bool
   singleLegalObligationCloseOut : Bool
   noWalkawayClause : Bool
   reasonedLegalOpinionsInAllJurisdictions : Bool
+  noCrossProductNetting : Bool := true
   deriving DecidableEq, Repr
 
 def BilateralNettingAgreement.isEligible (b : BilateralNettingAgreement) : Bool :=
   b.writtenAndLegallyEnforceable &&
   b.singleLegalObligationCloseOut &&
   b.noWalkawayClause &&
-  b.reasonedLegalOpinionsInAllJurisdictions
+  b.reasonedLegalOpinionsInAllJurisdictions &&
+  b.noCrossProductNetting
 
 /-- APS 110 Attachment D, Paragraph 23 & APS 210 Attachment C, Paragraph 28:
     Cash variation margin eligibility to offset positive derivative replacement cost. -/
@@ -134,6 +140,9 @@ structure CashVariationMarginEligibility where
   calculatedAndExchangedDailyMtM : Bool
   inContractMnaOrCcpCurrency : Bool
   inSameSettlementCurrencyAsDerivative : Bool
+  /-- Variation margin exchanged is the full amount needed to fully extinguish the MtM exposure
+      (subject to threshold and minimum transfer amounts). -/
+  fullyExtinguishesMtmExposure : Bool
   deriving DecidableEq, Repr
 
 def CashVariationMarginEligibility.isEligibleForNsfrOffset
@@ -142,7 +151,8 @@ def CashVariationMarginEligibility.isEligibleForNsfrOffset
   vm.notSegregatedIfNonQccp &&
   vm.calculatedAndExchangedDailyMtM &&
   vm.inContractMnaOrCcpCurrency &&
-  vm.inSameSettlementCurrencyAsDerivative
+  vm.inSameSettlementCurrencyAsDerivative &&
+  vm.fullyExtinguishesMtmExposure
 
 /-- APS 110 Attachment D, Paragraph 38: Netting of SFT cash payables and receivables
     with a single counterparty (APS 210 Attachment C para 26).
@@ -151,7 +161,7 @@ def CashVariationMarginEligibility.isEligibleForNsfrOffset
 structure SftNettingCriteria where
   sameCounterparty : Bool
   sameExplicitFinalSettlementDate : Bool
-  notOpenEndedUnwindable : Bool := true
+  notOpenEndedUnwindable : Bool
   legallyEnforceableNettingNormalAndDefault : Bool
   settledNetOrSimultaneously : Bool
   deriving DecidableEq, Repr

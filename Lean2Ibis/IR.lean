@@ -218,6 +218,7 @@ structure WindowSpec where
   preceding? : Option Nat := none
   following? : Option Nat := none
   precedingDays? : Option Nat := none
+  followingDays? : Option Nat := none
   deriving DecidableEq, Repr
 
 /-- Relational query AST (compiles directly to Ibis `Table` pipelines). -/
@@ -228,6 +229,8 @@ inductive RelExpr where
   | groupBy (keys : List String) (aggs : List (String × AggOp × SExpr)) (input : RelExpr)
   | window (cols : List (String × AggOp × SExpr × WindowSpec)) (input : RelExpr)
   | leftJoin (keyCol : String) (left right : RelExpr)
+  /-- Left join on several key columns (all must be equal). -/
+  | leftJoinOn (keyCols : List String) (left right : RelExpr)
   deriving Repr
 
 /-- Table environment mapping table names to lists of rows. -/
@@ -293,14 +296,20 @@ private def evalWindowCol (rows : List Row) (scalarEnv : Row)
           if op == .rowNumber then
             .rat ((i + 1 : Nat) : Rat)
           else
-            match spec.precedingDays?, spec.orderBy with
-            | some pd, [(dateCol, true)] =>
+            match spec.precedingDays?, spec.followingDays?, spec.orderBy with
+            | some pd, none, [(dateCol, true)] =>
               let d := (Row.get r dateCol).asDate
               let frame := sorted.filter (fun r' =>
                 let d' := (Row.get r' dateCol).asDate
                 d - (pd : Int) ≤ d' && d' ≤ d)
               evalAggOp op (frame.map (fun r' => evalSExpr (r' ++ scalarEnv) expr))
-            | _, _ =>
+            | none, some fd, [(dateCol, true)] =>
+              let d := (Row.get r dateCol).asDate
+              let frame := sorted.filter (fun r' =>
+                let d' := (Row.get r' dateCol).asDate
+                d ≤ d' && d' ≤ d + (fd : Int))
+              evalAggOp op (frame.map (fun r' => evalSExpr (r' ++ scalarEnv) expr))
+            | _, _, _ =>
               let lo := match spec.preceding? with | none => 0 | some p => i - p
               let hi := match spec.following? with | none => n - 1 | some f => min (n - 1) (i + f)
               let frame := listSlice sorted lo hi
@@ -334,6 +343,13 @@ def evalRelWithEnv (tenv : TableEnv) (scalarEnv : Row) : RelExpr → List Row
     lrows.map (fun lr =>
       let lv := Row.get lr keyCol
       match rrows.find? (fun rr => Row.get rr keyCol == lv) with
+      | some rr => lr ++ rr
+      | none => lr)
+  | .leftJoinOn keyCols left right =>
+    let lrows := evalRelWithEnv tenv scalarEnv left
+    let rrows := evalRelWithEnv tenv scalarEnv right
+    lrows.map (fun lr =>
+      match rrows.find? (fun rr => keyCols.all (fun k => Row.get rr k == Row.get lr k)) with
       | some rr => lr ++ rr
       | none => lr)
 

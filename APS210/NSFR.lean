@@ -1,7 +1,10 @@
 import APS210.Basic
+import APS210.Facts
 import APS210.ExternalStandards
 
 namespace APS210.NSFR
+
+open APS210.Facts
 
 /-- Attachment C, Paragraphs 8, 20–23: Effective residual maturity / encumbrance period. -/
 inductive NsfrMaturityBucket where
@@ -43,6 +46,7 @@ inductive AsfCategory where
   | deferredTaxLiability (maturity : NsfrMaturityBucket)
   | minorityInterest (maturity : NsfrMaturityBucket)
   | cooperativeNetworkDeposit (apraApprovedFactor : Option Rate := none)
+  | tradeDatePayablesStandardSettlement
   | allOtherLiabilitiesAndEquity
   deriving DecidableEq, Repr
 
@@ -72,6 +76,7 @@ def AsfCategory.factor : AsfCategory → Rate
     | .sixMonthsToLessThanOneYear => pct 50
     | .lessThanSixMonths => pct 0
   | .cooperativeNetworkDeposit f => min (nonNeg (f.getD 0)) (pct 85)
+  | .tradeDatePayablesStandardSettlement => pct 0
   | .allOtherLiabilitiesAndEquity => pct 0
 
 /-- An ASF capital or liability item (Attachment C, Paragraph 7). -/
@@ -81,6 +86,7 @@ structure AsfItem where
   carryingValue : Money
   /-- Paras 38–40: APRA-determined interdependent liability receives 0% ASF. -/
   isInterdependentApproved : Bool := false
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 def AsfItem.effectiveFactor (item : AsfItem) : Rate :=
@@ -100,7 +106,12 @@ inductive RsfCategory where
   | unencumberedHqla1NonZeroPctRsf
   -- 10% RSF (paras 31–32)
   | loanToFiLt6mSecuredByHqla1Rehypothecatable
-  | clfThirdPartyDebtOrHostAla
+  /-- Para 32(a): CLF-eligible third-party debt securities (limited by the recognised CLF). -/
+  | clfEligibleThirdPartyDebt
+  /-- Para 32(a): Other jurisdictions' ALA / host-recognised liquid assets APRA allows in the LCR
+      numerator (limited by `NsfrInput.hostAlaInLcrLimit`, a pool separate from the CLF). -/
+  | hostJurisdictionAla
+  /-- Para 32(b): Self-securitised CLF-eligible assets (limited by the CLF less third-party debt). -/
   | selfSecuritisedClfEligible
   -- 15% RSF (para 33)
   | unencumberedHqla2a
@@ -132,7 +143,8 @@ def RsfCategory.baseFactor : RsfCategory → Rate
   | .tradeDateReceivablesStandardSettlement => pct 0
   | .unencumberedHqla1NonZeroPctRsf => pct 5
   | .loanToFiLt6mSecuredByHqla1Rehypothecatable => pct 10
-  | .clfThirdPartyDebtOrHostAla => pct 10
+  | .clfEligibleThirdPartyDebt => pct 10
+  | .hostJurisdictionAla => pct 10
   | .selfSecuritisedClfEligible => pct 10
   | .unencumberedHqla2a => pct 15
   | .otherLoanToFiLt6m => pct 15
@@ -151,19 +163,23 @@ def RsfCategory.baseFactor : RsfCategory → Rate
   | .physicalTradedCommoditiesInclGold => pct 85
   | .allOtherAssets => pct 100
 
-/-- Attachment C, Paragraphs 23–24: Apply encumbrance adjustment to an RSF factor. -/
+/-- Attachment C, Paragraphs 23–24: Apply encumbrance adjustment to an RSF factor.
+    Per Para 24, an APRA-approved lower RSF factor for exceptional central bank liquidity operations
+    applies only when the asset is encumbered and may not increase the RSF factor above the standard
+    encumbered factor. -/
 def applyEncumbranceFactor
     (base : Rate)
     (enc : EncumbrancePeriod)
     (exceptionalCbApraFactor : Option Rate := none) : Rate :=
-  match exceptionalCbApraFactor with
-  | some r => nonNeg r
-  | none =>
-    match enc with
+  let standard := match enc with
     | .unencumbered => base
     | .lessThanSixMonths => base
     | .sixMonthsToLessThanOneYear => max (pct 50) base
     | .oneYearOrMore => pct 100
+  match enc, exceptionalCbApraFactor with
+  | .unencumbered, _ => standard
+  | _, some r => min standard (nonNeg r)
+  | _, none => standard
 
 /-- An on-balance-sheet RSF asset item (Attachment C, Paragraphs 17–37). -/
 structure RsfAssetItem where
@@ -179,8 +195,9 @@ structure RsfAssetItem where
       variation margin assets already deducted from derivative liabilities. -/
   excludedFromBalanceSheetRsf : Bool := false
   /-- Para 32(a)–(b): Fallback RSF factor for CLF-eligible assets above the recognised
-      CLF limit (defaults to 50% for third-party debt / 85% for self-securitised assets). -/
+      CLF limit (defaults to 85%, para 36(c)). -/
   excessClfFallbackFactor : Option Rate := none
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 def RsfAssetItem.effectiveFactor (item : RsfAssetItem) : Rate :=
@@ -189,8 +206,19 @@ def RsfAssetItem.effectiveFactor (item : RsfAssetItem) : Rate :=
     | _ => false
   if item.isInterdependentApproved || item.excludedFromBalanceSheetRsf || customerMarginExempt then
     pct 0
-  else
-    applyEncumbranceFactor item.category.baseFactor item.encumbrance item.exceptionalCbApraFactor
+  else match item.category with
+    -- Para 36(a): Initial margin & CCP default fund contributions receive 85% (or higher only if
+    -- the posted asset itself has a higher RSF factor); encumbrance is already reflected in the 85%.
+    | .initialMarginAndCcpDefaultFund _ false => item.category.baseFactor
+    -- Para 23 & Att A Para 16: CLF/ALA assets encumbered for 6m..<1y are not unencumbered CLF
+    -- collateral and must retain max(50%, unencumbered fallback RSF) rather than dropping to 50%.
+    | .clfEligibleThirdPartyDebt | .hostJurisdictionAla | .selfSecuritisedClfEligible =>
+      let effectiveBase := match item.encumbrance with
+        | .sixMonthsToLessThanOneYear => nonNeg (item.excessClfFallbackFactor.getD (pct 85))
+        | _ => item.category.baseFactor
+      applyEncumbranceFactor effectiveBase item.encumbrance item.exceptionalCbApraFactor
+    | _ =>
+      applyEncumbranceFactor item.category.baseFactor item.encumbrance item.exceptionalCbApraFactor
 
 def RsfAssetItem.weightedAmount (item : RsfAssetItem) : Money :=
   nonNeg item.carryingValue * item.effectiveFactor
@@ -227,9 +255,9 @@ def classifyLoanRsf
       match maturity with
       | .lessThanSixMonths | .sixMonthsToLessThanOneYear => .otherNonHqlaLt1Yr
       | .oneYearOrMore =>
-        let passes35a := match resMortgage with
-          | some m => m.qualifiesFor65PctRsf
-          | none => false
+        let passes35a := match cp, resMortgage with
+          | .naturalPerson, some m => m.qualifiesFor65PctRsf
+          | _, _ => false
         if passes35a then .standardResidentialPropertyLoansLvrLe80Ge1Yr
         else if aps112RiskWeightPct <= 35 then .otherLoansNonFiRwLe35Ge1Yr
         else .otherPerformingLoansNonFiGe1Yr
@@ -256,6 +284,7 @@ structure ObsExposureItem where
   category : ObsExposureCategory
   /-- Undrawn facility amount (for Table 1 rows) or actual 12-month net outflows (for para 42). -/
   amount : Money
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 def ObsExposureItem.weightedAmount (item : ObsExposureItem) : Money :=
@@ -267,6 +296,7 @@ structure DerivativeContractMtM where
   nettingSetId : String
   mtm : Rat
   bilateralNetting : Option External.BilateralNettingAgreement := none
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 private def insertMtMGroup (key : String) (x : DerivativeContractMtM) :
@@ -276,27 +306,26 @@ private def insertMtMGroup (key : String) (x : DerivativeContractMtM) :
     if k == key then (k, xs ++ [x]) :: rest
     else (k, xs) :: insertMtMGroup key x rest
 
-/-- Attachment C, Paragraphs 9 & 27: Aggregate individual derivative contract MtMs into
-    `(grossDerivativeAssets, grossDerivativeLiabilities)`.
-    Contracts in a netting set whose `BilateralNettingAgreement.isEligible = true`
-    (all legs) are netted to a single net replacement cost; otherwise positive and negative
-    replacement costs are summed gross without cross-contract netting. -/
-def computeNettedDerivativeTotals (contracts : List DerivativeContractMtM) : Money × Money :=
+/-- Attachment C, Paragraphs 9 & 27: Per netting set `(id, grossDerivativeAssets, grossDerivativeLiabilities)`.
+    Contracts in a netting set whose `BilateralNettingAgreement.isEligible = true` (all legs) are
+    netted to a single net replacement cost; otherwise positive and negative replacement costs are
+    summed gross without cross-contract netting. -/
+def nettingSetTotals (contracts : List DerivativeContractMtM) : List (String × Money × Money) :=
   let groups := contracts.foldl (fun acc c => insertMtMGroup c.nettingSetId c acc) []
-  groups.foldl (fun (accAssets, accLiabs) (_, grp) =>
+  groups.map (fun (k, grp) =>
     let allEligible := grp.all (fun c =>
       match c.bilateralNetting with
       | some b => b.isEligible
       | none => false)
     if allEligible then
       let netRc := sumBy grp (·.mtm)
-      if netRc >= 0 then (accAssets + netRc, accLiabs)
-      else (accAssets, accLiabs + (-netRc))
+      if netRc >= 0 then (k, netRc, 0) else (k, 0, -netRc)
     else
-      let posSum := sumBy grp (fun c => nonNeg c.mtm)
-      let negSum := sumBy grp (fun c => nonNeg (-c.mtm))
-      (accAssets + posSum, accLiabs + negSum)
-  ) (0, 0)
+      (k, sumBy grp (fun c => nonNeg c.mtm), sumBy grp (fun c => nonNeg (-c.mtm))))
+
+/-- Attachment C, Paragraphs 9 & 27: Aggregate `(grossDerivativeAssets, grossDerivativeLiabilities)`. -/
+def computeNettedDerivativeTotals (contracts : List DerivativeContractMtM) : Money × Money :=
+  (nettingSetTotals contracts).foldl (fun (a, l) (_, sa, sl) => (a + sa, l + sl)) (0, 0)
 
 /-- Attachment C, Paragraph 26 & APS 110 Attachment D Paragraph 38:
     Net SFT cash receivables and payables with a single counterparty only when
@@ -313,39 +342,85 @@ def NsfrSftNettingGroup.netNsfrReceivable (g : NsfrSftNettingGroup) : Money :=
   else
     nonNeg g.receivable
 
-/-- Attachment C, Paragraphs 9–10, 15(c), 27–28, 37(b), 37(d): Derivative inputs for NSFR. -/
-structure NsfrDerivativeInput where
-  /-- Para 9: Sum of negative replacement costs (after eligible bilateral netting). -/
-  grossDerivativeLiabilities : Money := 0
-  /-- Para 10: Total collateral posted as variation margin on derivative liabilities. -/
-  variationMarginPosted : Money := 0
-  /-- Para 27: Sum of positive replacement costs (after eligible bilateral netting). -/
-  grossDerivativeAssets : Money := 0
-  /-- Para 28: Cash variation margin received meeting APS 110 Att D para 23 in same settlement currency. -/
-  eligibleCashVariationMarginReceived : Money := 0
-  /-- Optional contract-level MtM legs for Paras 9 & 27 bilateral netting calculation. -/
-  contracts : List DerivativeContractMtM := []
-  /-- Optional APS 110 Att D para 23 cash variation margin eligibility check. -/
-  cashVmReceivedEligibility : Option External.CashVariationMarginEligibility := none
+def NsfrSftNettingGroup.netNsfrPayable (g : NsfrSftNettingGroup) : Money :=
+  if g.nettingCriteria.isEligible then
+    nonNeg (nonNeg g.payable - nonNeg g.receivable)
+  else
+    nonNeg g.payable
+
+/-- Attachment C, Paragraphs 38–40: Structured validation for APRA-determined interdependent
+    asset and liability pairs (0% ASF and 0% RSF). -/
+structure InterdependentPair where
+  asset : RsfAssetItem
+  liability : AsfItem
+  apraApprovalRef : Reading String
+  clearlyIdentifiable : Bool
+  sameMaturityAndPrincipal : Bool
+  adiActsSolelyAsPassThrough : Bool
+  distinctCounterparties : Bool
   deriving DecidableEq, Repr
 
+def InterdependentPair.isValid (p : InterdependentPair) : Bool :=
+  (match p.apraApprovalRef with | .known s => s != "" | _ => false) &&
+  p.clearlyIdentifiable &&
+  p.sameMaturityAndPrincipal &&
+  (nonNeg p.asset.carryingValue == nonNeg p.liability.carryingValue) &&
+  p.adiActsSolelyAsPassThrough &&
+  p.distinctCounterparties
+
+/-- Attachment C, Paragraph 28: Cash variation margin received on one netting set. It offsets only
+    that netting set's positive replacement cost, and only when its eligibility is known to hold
+    (APS 110 Att D para 23, including that it fully extinguishes the MtM exposure). -/
+structure NettingSetVariationMargin where
+  nettingSetId : String
+  cashReceived : Money
+  eligibility : Reading External.CashVariationMarginEligibility
+  observation : ObservationContext
+  deriving DecidableEq, Repr
+
+def NettingSetVariationMargin.eligibleAmount (vm : NettingSetVariationMargin) : Money :=
+  match vm.eligibility with
+  | .known e => if e.isEligibleForNsfrOffset then nonNeg vm.cashReceived else 0
+  | _ => 0
+
+/-- Attachment C, Paragraphs 9–10, 15(c), 27–28, 37(b), 37(d): Derivative inputs for NSFR. -/
+structure NsfrDerivativeInput where
+  /-- Paras 9 & 27: Contract-level MtMs, grouped into netting sets. -/
+  contracts : List DerivativeContractMtM
+  /-- Para 10: Total collateral posted as variation margin on derivative liabilities. -/
+  variationMarginPosted : Money
+  /-- Para 28: Cash variation margin received, per netting set. -/
+  variationMarginReceived : List NettingSetVariationMargin
+  deriving DecidableEq, Repr
+
+/-- A derivative book with no contracts and no margin. -/
+def NsfrDerivativeInput.empty : NsfrDerivativeInput :=
+  { contracts := [], variationMarginPosted := 0, variationMarginReceived := [] }
+
 def NsfrDerivativeInput.effectiveGrossAssets (d : NsfrDerivativeInput) : Money :=
-  if d.contracts.isEmpty then nonNeg d.grossDerivativeAssets
-  else (computeNettedDerivativeTotals d.contracts).1
+  (computeNettedDerivativeTotals d.contracts).1
 
 def NsfrDerivativeInput.effectiveGrossLiabilities (d : NsfrDerivativeInput) : Money :=
-  if d.contracts.isEmpty then nonNeg d.grossDerivativeLiabilities
-  else (computeNettedDerivativeTotals d.contracts).2
+  (computeNettedDerivativeTotals d.contracts).2
 
-def NsfrDerivativeInput.nsfrDerivativeLiabilities (d : NsfrDerivativeInput) : Money :=
-  nonNeg (d.effectiveGrossLiabilities - nonNeg d.variationMarginPosted)
+/-- Attachment C, Paragraph 10 & fn 11–12:
+    `NSFR derivative liabilities = derivative liabilities - total collateral posted as variation margin`.
+    Not floored at zero so that excess variation margin posted (excluded from balance-sheet RSF per
+    fn 12) flows into `MAX(NSFR derivative assets - NSFR derivative liabilities, 0)` at 100% RSF
+    (Para 37(b) & fn 29). -/
+def NsfrDerivativeInput.nsfrDerivativeLiabilities (d : NsfrDerivativeInput) : Rat :=
+  d.effectiveGrossLiabilities - nonNeg d.variationMarginPosted
 
+/-- Para 28: NSFR derivative assets, offsetting eligible cash VM per netting set and capping each
+    offset at that netting set's positive replacement cost. -/
 def NsfrDerivativeInput.nsfrDerivativeAssets (d : NsfrDerivativeInput) : Money :=
-  let vmOk := match d.cashVmReceivedEligibility with
-    | some vm => vm.isEligibleForNsfrOffset
-    | none => true
-  let vmAmt := if vmOk then nonNeg d.eligibleCashVariationMarginReceived else 0
-  nonNeg (d.effectiveGrossAssets - vmAmt)
+  sumBy (nettingSetTotals d.contracts) (fun (k, assets, _) =>
+    let vm := sumBy (d.variationMarginReceived.filter (·.nettingSetId == k)) NettingSetVariationMargin.eligibleAmount
+    nonNeg (assets - vm))
+
+def NsfrDerivativeInput.dataIssues (d : NsfrDerivativeInput) : List DataIssue :=
+  d.variationMarginReceived.flatMap fun vm =>
+    readingIssues vm.nettingSetId "variationMarginReceived.eligibility" "no para 28 offset" vm.eligibility
 
 /-- Para 37(b) & fn 29: `100% * MAX(NSFR derivative assets - NSFR derivative liabilities, 0)`.
     Bilateral netting eligibility (Paras 9 & 27) governs contract-level replacement cost netting
@@ -359,17 +434,19 @@ def NsfrDerivativeInput.derivativeLiabilityAddOnRsf (d : NsfrDerivativeInput) : 
 
 /-- Full inputs for Attachment C NSFR calculation. -/
 structure NsfrInput where
+  /-- Reporting date (`validAt`) and data cut (`knownAt`) this calculation is for. -/
+  asOf : ObservationContext
   asfItems : List AsfItem
   rsfAssets : List RsfAssetItem
   obsExposures : List ObsExposureItem
-  derivatives : NsfrDerivativeInput := {}
+  derivatives : NsfrDerivativeInput
   /-- Attachment C, Paragraph 32(a)–(b): Optional recognised LCR CLF limit
       to cap 10% RSF treatment on CLF-eligible third-party debt and self-securitised assets.
       Standalone `evaluateNsfr` treats `none` as `0`; `evaluateAdiCompliance` populates it
       from the corresponding AUD LCR `recognisedClf`. -/
   recognisedClfLimit : Option Money := none
   /-- Attachment C, Paragraph 32(a): Host-recognised ALA / other jurisdictions' ALA allowed by APRA
-      in the LCR numerator (receives 10% RSF under Para 32(a) independently of AUD CLF). -/
+      in the LCR numerator. Limits `hostJurisdictionAla` only; it never adds to the CLF pools. -/
   hostAlaInLcrLimit : Money := 0
   /-- Attachment C, Paragraph 4: Internal ASF buffer above the minimum NSFR requirement. -/
   internalNsfrBuffer : Money := 0
@@ -384,7 +461,19 @@ structure NsfrResult where
   obsRsf : Money
   ratioCheck : RatioCheck
   bufferMet : Bool
+  /-- Inputs that were not known or did not match `asOf`, with the treatment applied. -/
+  dataIssues : List DataIssue
   deriving DecidableEq, Repr
+
+/-- Data issues across every record in an NSFR input. -/
+def NsfrInput.dataIssues (input : NsfrInput) : List DataIssue :=
+  let obs := observationIssues input.asOf
+  (input.asfItems.flatMap fun a => obs a.id a.observation) ++
+  (input.rsfAssets.flatMap fun a => obs a.id a.observation) ++
+  (input.obsExposures.flatMap fun o => obs o.id o.observation) ++
+  (input.derivatives.contracts.flatMap fun c => obs c.nettingSetId c.observation) ++
+  (input.derivatives.variationMarginReceived.flatMap fun v => obs v.nettingSetId v.observation) ++
+  input.derivatives.dataIssues
 
 def insertByFallbackDesc
     (defaultFallback : Rate) (x : RsfAssetItem) : List RsfAssetItem → List RsfAssetItem
@@ -411,29 +500,28 @@ def foldClfBucketRsf
   ) (0, initLimit)
 
 /-- Compute NSFR = ASF / RSF and check compliance against `requiredMinRate` (default 100%, para 60).
-    Always enforces Attachment C Paragraph 32(a)–(b) 10% RSF caps (defaulting `none` to 0);
-    allocates the limit greedily to highest-fallback-RSF items first (order-independent) and
-    defaults excess fallback to 85% for both 32(a) third-party debt / host ALA (para 36(c)
-    conservative fallback for >= 1y non-HQLA securities) and 32(b) self-securitised assets
-    (para 36(c)), both overridable via `excessClfFallbackFactor` (e.g. `some (pct 50)` for
-    para 34(f) qualifying < 1y / corporate securities). -/
+    Attachment C, Paragraph 32: three 10% RSF pools, each allocated greedily to the highest-fallback
+    items first (order-independent), with excess at `excessClfFallbackFactor` (default 85%, para 36(c)):
+    * 32(a) CLF-eligible third-party debt, limited by the recognised CLF;
+    * 32(a) host-jurisdiction ALA, limited by `hostAlaInLcrLimit`;
+    * 32(b) self-securitised assets, limited by the CLF less the third-party debt given 10% RSF. -/
 def evaluateNsfr
     (requiredMinRate : Rate := pct 100)
     (input : NsfrInput) : NsfrResult :=
   let totalAsf := sumBy input.asfItems AsfItem.weightedAmount
   let clfLim := nonNeg (input.recognisedClfLimit.getD 0)
   let hostAlaLim := nonNeg input.hostAlaInLcrLimit
-  let isEligible32a (a : RsfAssetItem) : Bool :=
-    a.category == .clfThirdPartyDebtOrHostAla && a.effectiveFactor == pct 10
-  let isEligible32b (a : RsfAssetItem) : Bool :=
-    a.category == .selfSecuritisedClfEligible && a.effectiveFactor == pct 10
-  let nonClfRsf := sumBy
-    (input.rsfAssets.filter (fun a => !isEligible32a a && !isEligible32b a))
-    RsfAssetItem.weightedAmount
-  let (rsf32a, rem32aLim) := foldClfBucketRsf (input.rsfAssets.filter isEligible32a) (clfLim + hostAlaLim) (pct 85)
-  let remClfLim := min clfLim rem32aLim
-  let (rsf32b, _) := foldClfBucketRsf (input.rsfAssets.filter isEligible32b) remClfLim (pct 85)
-  let assetRsf := nonClfRsf + rsf32a + rsf32b
+  let inPool (c : RsfCategory) (a : RsfAssetItem) : Bool := a.category == c && a.effectiveFactor == pct 10
+  let isClfPool (a : RsfAssetItem) : Bool :=
+    inPool .clfEligibleThirdPartyDebt a || inPool .hostJurisdictionAla a || inPool .selfSecuritisedClfEligible a
+  let nonClfRsf := sumBy (input.rsfAssets.filter (fun a => !isClfPool a)) RsfAssetItem.weightedAmount
+  let (rsfThirdParty, remClfLim) :=
+    foldClfBucketRsf (input.rsfAssets.filter (inPool .clfEligibleThirdPartyDebt)) clfLim (pct 85)
+  let (rsfHostAla, _) :=
+    foldClfBucketRsf (input.rsfAssets.filter (inPool .hostJurisdictionAla)) hostAlaLim (pct 85)
+  let (rsfSelfSec, _) :=
+    foldClfBucketRsf (input.rsfAssets.filter (inPool .selfSecuritisedClfEligible)) remClfLim (pct 85)
+  let assetRsf := nonClfRsf + rsfThirdParty + rsfHostAla + rsfSelfSec
   let obsRsf := sumBy input.obsExposures ObsExposureItem.weightedAmount
   let netDerivRsf := input.derivatives.netDerivativeRsf
   let derivAddOn := input.derivatives.derivativeLiabilityAddOnRsf
@@ -446,6 +534,7 @@ def evaluateNsfr
     derivativeLiabilityAddOnRsf := derivAddOn
     obsRsf
     ratioCheck := rc
-    bufferMet }
+    bufferMet
+    dataIssues := input.dataIssues }
 
 end APS210.NSFR

@@ -1,6 +1,9 @@
 import APS210.Basic
+import APS210.Facts
 
 namespace APS210.LCR
+
+open APS210.Facts
 
 /-- Attachment A, Paragraph 55–56, Table 4 – Maturing secured lending collateral categories. -/
 inductive SecuredLendingCollateral where
@@ -60,17 +63,22 @@ structure InflowItem where
   currency : Currency
   category : InflowCategory
   amount : Money
-  /-- Para 54: Must be fully performing with no expected default within 30 days. -/
-  isFullyPerforming : Bool := true
+  /-- Para 54: Must be fully performing with no expected default within 30 days.
+      Only an affirmative reading counts; anything else contributes no inflow. -/
+  isFullyPerforming : Reading Bool
   /-- Para 31: Must not double-count assets already included in the stock of HQLA. -/
-  countedInHqla : Bool := false
+  countedInHqla : Bool
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 def InflowItem.inflowAmount (item : InflowItem) : Money :=
-  if item.isFullyPerforming && !item.countedInHqla then
+  if item.isFullyPerforming.affirmative && !item.countedInHqla then
     nonNeg item.amount * item.category.rate
   else
     0
+
+def InflowItem.dataIssues (item : InflowItem) : List DataIssue :=
+  readingIssues item.id "isFullyPerforming" "treated as not fully performing; no inflow" item.isFullyPerforming
 
 /-- Attachment A, Paragraphs 30 & 54: Compute gross inflows, capped inflows (75% of outflows,
     or stricter APRA concentration cap), and total net cash outflows. -/

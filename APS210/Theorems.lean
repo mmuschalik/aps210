@@ -11,6 +11,8 @@ import APS210.CashFlows
 
 namespace APS210.Theorems
 
+open APS210.Facts
+
 open APS210.LCR
 open APS210.NSFR
 open APS210.CashFlows
@@ -37,12 +39,12 @@ private theorem rat_le_max_left (a b : Rat) : a ≤ max a b := by
   · exact Rat.le_refl
 
 /-- Table 1 (Attachment A, para 40): The scorecard total is always at most 6. -/
-theorem scorecard_le_six (s : LessStableScorecardInput) : s.score ≤ 6 := by
+theorem scorecard_le_six (above : Bool) (s : LessStableScorecardInput) : s.score above ≤ 6 := by
   simp only [LessStableScorecardInput.score]
-  cases s.aboveGuaranteeLimitOr250k <;>
-  cases s.isOnlineAccount <;>
-  cases s.noEstablishedRelationship <;>
-  cases s.isHeavilyRateDriven <;>
+  cases above <;>
+  cases s.isOnlineAccount.affirmativeOrMissing <;>
+  cases s.noEstablishedRelationship.affirmativeOrMissing <;>
+  cases s.isHeavilyRateDriven.affirmativeOrMissing <;>
   decide
 
 /-- Table 2 (Attachment A, para 40): Less stable run-off rate is 10% iff score <= 2, else 25%. -/
@@ -109,7 +111,8 @@ theorem encumbrance_rsf_bounds (base : Rate) :
     pct 50 ≤ applyEncumbranceFactor base .sixMonthsToLessThanOneYear none := by
   constructor
   · rfl
-  · simp [applyEncumbranceFactor, rat_le_max_left]
+  · unfold applyEncumbranceFactor
+    exact rat_le_max_left _ _
 
 /-- Attachment C, Paragraphs 38–40: Interdependent assets and liabilities receive 0% factor. -/
 theorem interdependent_zero_factor (asf : AsfItem) (rsf : RsfAssetItem)
@@ -134,12 +137,8 @@ theorem foreign_ho_facility_le_50pct
   simp only [evaluateLcr]
   cases input.headOfficeFacility with
   | none =>
-    have hnco : 0 ≤ (computeNetCashOutflows
-      (computeTotalExpectedCashOutflows input.retailDeposits input.otherOutflows input.basis)
-      input.inflows input.apraInflowCapOverride).totalNetCashOutflows :=
-      netCashOutflows_nonneg _ _ _
     have hpct50 : (0 : Rat) ≤ pct 50 := by native_decide
-    exact Rat.mul_nonneg hpct50 (Rat.mul_nonneg hmin hnco)
+    exact Rat.mul_nonneg hpct50 (Rat.mul_nonneg hmin (netCashOutflows_nonneg _ _ _))
   | some f => exact rat_min_le_right _ _
 
 /-- Top-level soundness: `overallCompliant = true` implies both qualitative and quantitative compliance. -/
@@ -224,8 +223,8 @@ theorem hqla_cap15_bound (u1 u2a u2b : Money) (uw : HqlaUnwindAdjustments) :
     let b := computeHqlaCaps u1 u2a u2b uw
     let capped2b := b.adjHqla2b - b.excess15Cap
     capped2b ≤ pct 15 * (b.adjHqla1 + b.adjHqla2a + capped2b) := by
-  simp only [computeHqlaCaps, nonNeg, pct]
-  exact cap15_alg _ _ (rat_sub_max_zero_le _ _)
+  dsimp only [computeHqlaCaps, nonNeg, pct]
+  exact cap15_alg _ _ (Rat.le_trans (rat_sub_max_zero_le _ _) (rat_min_le_left _ _))
 
 /-- Attachment A, Paragraph 6–8: The `2/3` formula in `computeHqlaCaps` enforces that
     capped HQLA2 (`adj2After15 - excess40Cap`) never exceeds 40% of post-cap total HQLA. -/
@@ -233,7 +232,7 @@ theorem hqla_cap40_bound (u1 u2a u2b : Money) (uw : HqlaUnwindAdjustments) :
     let b := computeHqlaCaps u1 u2a u2b uw
     let capped2 := b.adjHqla2a + (b.adjHqla2b - b.excess15Cap) - b.excess40Cap
     capped2 ≤ pct 40 * (b.adjHqla1 + capped2) := by
-  simp only [computeHqlaCaps, nonNeg, pct]
+  dsimp only [computeHqlaCaps, nonNeg, pct]
   exact cap40_alg _ _ (rat_sub_max_zero_le _ _)
 
 /-- Attachment A, Paragraph 15(a)–(c) & 17: Unapproved CLF yields 0, and recognised CLF
@@ -255,9 +254,9 @@ theorem clf_recognised_bounds (clf : ClfInput) :
         Rat.add_nonneg (rat_le_max_right _ _) (rat_le_max_right _ _)
       refine ⟨Rat.le_refl, rat_le_max_right _ _, hnn_col, fun hfalse => Bool.noConfusion hfalse⟩
     · simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte]
-      let graceOk := clf.collateralBecameIneligibleWithin30Days && match clf.collateralDaysSinceIneligible with
-        | some d => decide (d ≤ 30)
-        | none => true
+      let graceOk : Bool := match clf.recentlyIneligibleCollateralDays with
+        | .known d => decide (d ≤ 30)
+        | _ => false
       let c := nonNeg clf.collateralHeldAfterRbaMargins +
         (if graceOk = true then nonNeg clf.recentlyIneligibleCollateralAfterRbaMargins else 0)
       have ha : 0 ≤ nonNeg clf.contractualAmount := rat_le_max_right _ _
@@ -374,8 +373,8 @@ private theorem sumBy_split3 {α : Type} (xs : List α) (c : α → NSFR.NsfrMat
 theorem splitAmortisingLoanForRsf_conserves_principal
     (idPrefix : String) (lt1yCat ge1yCat : NSFR.RsfCategory)
     (legs : List (Money × Nat))
-    (enc : NSFR.EncumbrancePeriod) (interdep : Bool) :
-    sumBy (splitAmortisingLoanForRsf idPrefix lt1yCat ge1yCat legs enc interdep) (·.carryingValue) =
+    (enc : NSFR.EncumbrancePeriod) (interdep : Bool) (obs : ObservationContext) :
+    sumBy (splitAmortisingLoanForRsf idPrefix lt1yCat ge1yCat legs enc interdep none obs) (·.carryingValue) =
       sumBy legs (fun (a, _) => nonNeg a) := by
   simp only [splitAmortisingLoanForRsf, sumBy, List.foldl_cons, List.foldl_nil, Rat.zero_add]
   have h1 : legs.filter (fun (_, d) => d ≥ 365) = legs.filter (fun x => !(decide (x.2 < 365))) := by
@@ -391,8 +390,8 @@ theorem splitAmortisingLoanForRsf_conserves_principal
     and `>=1y` ASF buckets exact-conserves total carrying value. -/
 theorem splitLiabilityCashFlowsForAsf_conserves_carrying
     (idPrefix : String) (lt6mCat sixTo1yCat ge1yCat : NSFR.AsfCategory)
-    (legs : List (Money × Nat)) (interdep : Bool) :
-    sumBy (splitLiabilityCashFlowsForAsf idPrefix lt6mCat sixTo1yCat ge1yCat legs interdep) (·.carryingValue) =
+    (legs : List (Money × Nat)) (interdep : Bool) (obs : ObservationContext) :
+    sumBy (splitLiabilityCashFlowsForAsf idPrefix lt6mCat sixTo1yCat ge1yCat legs interdep none obs) (·.carryingValue) =
       sumBy legs (fun (a, _) => nonNeg a) := by
   simp only [splitLiabilityCashFlowsForAsf, sumBy, List.foldl_cons, List.foldl_nil, Rat.zero_add]
   exact sumBy_split3 legs (fun (_, d) => classifyNsfrDays d) (fun (a, _) => nonNeg a)
@@ -427,23 +426,41 @@ theorem hqla_operational_false_zero (basis : ConsolidationBasis) (a : HqlaAsset)
     a.valueAfterHaircut basis = 0 := by
   simp [HqlaAsset.valueAfterHaircut, HqlaAsset.eligibleMarketValue, h]
 
-/-- Attachment A, Paragraph 29: Non-transferable Level 2 HQLA with no `level2TransferableCap`
-    contributes 0 at Level 2. -/
-theorem hqla_level2_nontransferable_zero_cap (a : HqlaAsset)
+/-- Attachment A, Paragraph 29: Non-transferable HQLA in a group with no Level 2 cap contributes 0 at
+    Level 2, whatever the rest of the portfolio holds. -/
+theorem hqla_level2_nontransferable_zero_cap (assets : List HqlaAsset) (caps : List (String × Money))
+    (a : HqlaAsset)
     (hf : a.freelyTransferableAtLevel2 = false)
-    (hc : a.level2TransferableCap = none) :
-    a.eligibleMarketValue .level2 = 0 := by
-  have hmin0 : min (nonNeg a.marketValue) (nonNeg 0) = 0 := by
-    have h0 : nonNeg 0 = 0 := by native_decide
-    rw [h0]
-    have hnn : 0 ≤ nonNeg a.marketValue := rat_le_max_right _ _
-    change (if nonNeg a.marketValue ≤ 0 then nonNeg a.marketValue else 0) = 0
-    by_cases hle : nonNeg a.marketValue ≤ 0
-    · simp [hle]; exact Rat.le_antisymm hle hnn
-    · simp [hle]
-  simp only [HqlaAsset.eligibleMarketValue, hf, hc, Option.getD_none]
-  rw [hmin0]
-  simp
+    (hc : caps.filter (fun (k, _) => k == a.level2TransferGroup) = []) :
+    level2TransferScale .level2 assets caps a = 0 := by
+  simp only [level2TransferScale, hf, lowestCapFor, hc]
+  split
+  · rfl
+  · grind
+
+/-- Attachment A, Paragraph 29: The Level 2 scale factor never exceeds 1, so the group cap can only
+    reduce recognised HQLA. -/
+theorem level2TransferScale_le_one (basis : ConsolidationBasis) (assets : List HqlaAsset)
+    (caps : List (String × Money)) (a : HqlaAsset) :
+    level2TransferScale basis assets caps a ≤ 1 := by
+  simp only [level2TransferScale]
+  split
+  · split
+    · native_decide
+    · exact rat_min_le_left _ _
+  · exact Rat.le_refl
+
+/-- Attachment A, Paragraph 25: With an unknown day count there is no grace period. -/
+theorem hqla_unknown_ineligible_days_no_grace (a : HqlaAsset) (reason : String)
+    (h : a.daysSinceIneligible = .unknown reason) : a.graceOk = false := by
+  simp [HqlaAsset.graceOk, h]
+
+/-- Attachment A, Paragraphs 10 & 12: An HQLA2 asset with an unknown stress observation fails the
+    stress criterion. -/
+theorem hqla2_unknown_stress_fails (a : HqlaAsset) (reason : String)
+    (hcat : a.category ≠ .hqla1) (h : a.max30dPriceDecline = .unknown reason) : a.stressOk = false := by
+  unfold HqlaAsset.stressOk
+  cases hc : a.category <;> simp_all
 
 /-- Upstream schema invariant (Attachment A Paragraph 17): without current annual re-approval,
     upstream recognised CLF is always 0. -/
@@ -497,13 +514,14 @@ theorem sumBy_perm {α : Type} {xs ys : List α} (f : α → Rat) (h : xs.Perm y
     simp only [sumBy_cons, ← Rat.add_assoc, Rat.add_comm (f y) (f x)]
   | trans _ _ ih1 ih2 => exact ih1.trans ih2
 
-/-- Attachment B (MLH): Reordering MLH assets or liabilities leaves `evaluateMlh` unchanged. -/
-theorem evaluateMlh_perm (minRate : Rate)
+/-- Attachment B (MLH): Reordering MLH assets or liabilities leaves every `evaluateMlh` figure unchanged
+    (only the order of reported data issues can differ). -/
+theorem evaluateMlh_perm (minRate : Rate) (asOf : ObservationContext)
     {a1 a2 : List MLH.MlhAsset} {l1 l2 : List MLH.MlhLiabilityItem}
     (ha : a1.Perm a2) (hl : l1.Perm l2)
     (placements : Money) (trigger : Rate) :
-    MLH.evaluateMlh minRate { assets := a1, placementsByOtherAdis := placements, liabilities := l1, triggerRatio := trigger } =
-    MLH.evaluateMlh minRate { assets := a2, placementsByOtherAdis := placements, liabilities := l2, triggerRatio := trigger } := by
+    { MLH.evaluateMlh minRate { asOf, assets := a1, placementsByOtherAdis := placements, liabilities := l1, triggerRatio := trigger } with dataIssues := [] } =
+    { MLH.evaluateMlh minRate { asOf, assets := a2, placementsByOtherAdis := placements, liabilities := l2, triggerRatio := trigger } with dataIssues := [] } := by
   simp only [MLH.evaluateMlh]
   have hnon2f : sumBy (a1.filter (·.category != .netDepositsWithOtherAdisTwoBusinessDays)) MLH.MlhAsset.eligibleValue =
       sumBy (a2.filter (·.category != .netDepositsWithOtherAdisTwoBusinessDays)) MLH.MlhAsset.eligibleValue :=
@@ -516,13 +534,23 @@ theorem evaluateMlh_perm (minRate : Rate)
     sumBy_perm _ hl
   rw [hnon2f, h2f, hliab]
 
+/-- APG 210: A customer's aggregate balance and guarantee limit do not depend on deposit order. -/
+theorem customerGuaranteePosition_perm {r1 r2 : List RetailDeposit} (h : r1.Perm r2) (c : String) (cur : Currency) :
+    customerGuaranteePosition r1 c cur = customerGuaranteePosition r2 c cur := by
+  simp only [customerGuaranteePosition]
+  rw [sumBy_perm _ (h.filter _), (h.filter _).foldl_eq' (by intro x _ y _ z; cases z <;> simp <;> grind) none]
+
 /-- Attachment A (LCR): Reordering retail deposits or other outflows leaves total expected cash outflows unchanged. -/
 theorem computeTotalExpectedCashOutflows_perm
     {r1 r2 : List RetailDeposit} {o1 o2 : List OutflowItem}
     (hr : r1.Perm r2) (ho : o1.Perm o2) (basis : ConsolidationBasis) :
     computeTotalExpectedCashOutflows r1 o1 basis =
     computeTotalExpectedCashOutflows r2 o2 basis := by
-  simp only [computeTotalExpectedCashOutflows, sumBy_perm _ hr, sumBy_perm _ ho]
+  simp only [computeTotalExpectedCashOutflows]
+  have hfun : RetailDeposit.outflowAmount basis r1 = RetailDeposit.outflowAmount basis r2 := by
+    funext d
+    simp only [RetailDeposit.outflowAmount, customerGuaranteePosition_perm hr]
+  rw [hfun, sumBy_perm _ hr, sumBy_perm _ ho]
 
 /-- Attachment A (LCR): Reordering inflows leaves `computeNetCashOutflows` unchanged. -/
 theorem computeNetCashOutflows_perm (totalOutflows : Money)
@@ -532,17 +560,17 @@ theorem computeNetCashOutflows_perm (totalOutflows : Money)
   simp only [computeNetCashOutflows, sumBy_perm _ hi]
 
 /-- Attachment C (NSFR): Reordering ASF items or OBS exposures leaves `evaluateNsfr` unchanged. -/
-theorem evaluateNsfr_asf_obs_perm (minRate : Rate)
+theorem evaluateNsfr_asf_obs_perm (minRate : Rate) (asOf : ObservationContext)
     {asf1 asf2 : List AsfItem} {obs1 obs2 : List ObsExposureItem}
     (hasf : asf1.Perm asf2) (hobs : obs1.Perm obs2)
     (rsf : List RsfAssetItem) (deriv : NsfrDerivativeInput)
     (clfLim : Option Money) (hostAla : Money) (buf : Money) :
-    evaluateNsfr minRate
-      { asfItems := asf1, rsfAssets := rsf, obsExposures := obs1, derivatives := deriv,
-        recognisedClfLimit := clfLim, hostAlaInLcrLimit := hostAla, internalNsfrBuffer := buf } =
-    evaluateNsfr minRate
-      { asfItems := asf2, rsfAssets := rsf, obsExposures := obs2, derivatives := deriv,
-        recognisedClfLimit := clfLim, hostAlaInLcrLimit := hostAla, internalNsfrBuffer := buf } := by
+    { evaluateNsfr minRate
+      { asOf, asfItems := asf1, rsfAssets := rsf, obsExposures := obs1, derivatives := deriv,
+        recognisedClfLimit := clfLim, hostAlaInLcrLimit := hostAla, internalNsfrBuffer := buf } with dataIssues := [] } =
+    { evaluateNsfr minRate
+      { asOf, asfItems := asf2, rsfAssets := rsf, obsExposures := obs2, derivatives := deriv,
+        recognisedClfLimit := clfLim, hostAlaInLcrLimit := hostAla, internalNsfrBuffer := buf } with dataIssues := [] } := by
   simp only [evaluateNsfr, sumBy_perm _ hasf, sumBy_perm _ hobs]
 
 /-- Attachment C, Paragraphs 8 & 11(c) (Calendar-aware): With any explicit `reportingDate`,
@@ -550,8 +578,8 @@ theorem evaluateNsfr_asf_obs_perm (minRate : Rate)
 theorem splitLiabilityCashFlowsForAsfCal_conserves_carrying
     (rd : Upstream.EpochDate) (idPrefix : String)
     (lt6mCat sixTo1yCat ge1yCat : NSFR.AsfCategory)
-    (legs : List (Money × Nat)) (interdep : Bool) :
-    sumBy (splitLiabilityCashFlowsForAsfCal rd idPrefix lt6mCat sixTo1yCat ge1yCat legs interdep) (·.carryingValue) =
+    (legs : List (Money × Nat)) (interdep : Bool) (obs : ObservationContext) :
+    sumBy (splitLiabilityCashFlowsForAsfCal rd idPrefix lt6mCat sixTo1yCat ge1yCat legs interdep obs) (·.carryingValue) =
       sumBy legs (fun (a, _) => nonNeg a) := by
   simp only [splitLiabilityCashFlowsForAsfCal, splitLiabilityCashFlowsForAsf,
     sumBy, List.foldl_cons, List.foldl_nil, Rat.zero_add]
@@ -563,8 +591,8 @@ theorem splitAmortisingLoanForRsfCal_conserves_principal
     (rd : Upstream.EpochDate) (idPrefix : String)
     (lt1yCat ge1yCat : NSFR.RsfCategory)
     (legs : List (Money × Nat))
-    (enc : NSFR.EncumbrancePeriod) (interdep : Bool) :
-    sumBy (splitAmortisingLoanForRsfCal rd idPrefix lt1yCat ge1yCat legs enc interdep) (·.carryingValue) =
+    (enc : NSFR.EncumbrancePeriod) (interdep : Bool) (obs : ObservationContext) :
+    sumBy (splitAmortisingLoanForRsfCal rd idPrefix lt1yCat ge1yCat legs enc interdep obs) (·.carryingValue) =
       sumBy legs (fun (a, _) => nonNeg a) := by
   simp only [splitAmortisingLoanForRsfCal, splitAmortisingLoanForRsf,
     sumBy, List.foldl_cons, List.foldl_nil, Rat.zero_add]
@@ -605,8 +633,8 @@ theorem mlh_ineligible_asset_zero (a : MLH.MlhAsset) (h : a.isEligible = false) 
 
 theorem mlh_append_ineligible_unchanged (minRate : Rate) (input : MLH.MlhInput)
     (a : MLH.MlhAsset) (h : a.isEligible = false) :
-    MLH.evaluateMlh minRate { input with assets := input.assets ++ [a] } =
-    MLH.evaluateMlh minRate input := by
+    { MLH.evaluateMlh minRate { input with assets := input.assets ++ [a] } with dataIssues := [] } =
+    { MLH.evaluateMlh minRate input with dataIssues := [] } := by
   simp only [MLH.evaluateMlh, List.filter_append]
   have helig : a.eligibleValue = 0 := mlh_ineligible_asset_zero a h
   have hsplit : ∀ (p : MLH.MlhAsset → Bool),
@@ -623,22 +651,37 @@ theorem mlh_append_ineligible_unchanged (minRate : Rate) (input : MLH.MlhInput)
 /-- No double-counting (Attachment A, Paragraph 45): An inflow item already counted in HQLA
     (or not fully performing) contributes 0 eligible inflow. -/
 theorem inflow_countedInHqla_zero (i : InflowItem)
-    (h : i.countedInHqla = true ∨ i.isFullyPerforming = false) :
+    (h : i.countedInHqla = true ∨ i.isFullyPerforming.affirmative = false) :
     i.inflowAmount = 0 := by
   rcases h with hc | hp
   · simp [InflowItem.inflowAmount, hc]
   · simp [InflowItem.inflowAmount, hp]
 
-/-- No double-counting (NSFR Derivatives): When contract-level MtM rows are supplied
-    (`contracts ≠ []`), changing `grossDerivativeAssets` or `grossDerivativeLiabilities`
-    has no effect on `nsfrDerivativeAssets` or `nsfrDerivativeLiabilities`. -/
-theorem nsfr_contracts_replace_aggregate (d : NsfrDerivativeInput) (h : d.contracts.isEmpty = false)
-    (ga gl : Money) :
-    let d' : NsfrDerivativeInput := { d with grossDerivativeAssets := ga, grossDerivativeLiabilities := gl }
-    d'.nsfrDerivativeAssets = d.nsfrDerivativeAssets ∧
-    d'.nsfrDerivativeLiabilities = d.nsfrDerivativeLiabilities := by
-  simp [NsfrDerivativeInput.nsfrDerivativeAssets, NsfrDerivativeInput.nsfrDerivativeLiabilities,
-    NsfrDerivativeInput.effectiveGrossAssets, NsfrDerivativeInput.effectiveGrossLiabilities, h]
+/-- Attachment C, Paragraph 28: Variation margin whose eligibility is not known offsets nothing. -/
+theorem nsfr_vm_unknown_eligibility_no_offset (vm : NettingSetVariationMargin) (reason : String)
+    (h : vm.eligibility = .unknown reason ∨ vm.eligibility = .refused reason) :
+    vm.eligibleAmount = 0 := by
+  rcases h with h | h <;> simp [NettingSetVariationMargin.eligibleAmount, h]
+
+/-- Attachment C, Paragraph 28: Variation margin that does not fully extinguish the MtM exposure
+    offsets nothing. -/
+theorem nsfr_vm_not_extinguishing_no_offset (vm : NettingSetVariationMargin)
+    (e : External.CashVariationMarginEligibility) (h : vm.eligibility = .known e)
+    (hx : e.fullyExtinguishesMtmExposure = false) :
+    vm.eligibleAmount = 0 := by
+  simp [NettingSetVariationMargin.eligibleAmount, h,
+    External.CashVariationMarginEligibility.isEligibleForNsfrOffset, hx]
+
+/-- Attachment C, Paragraph 28: NSFR derivative assets are never negative: each netting set's VM offset
+    is capped at that set's positive replacement cost. -/
+theorem nsfr_derivative_assets_nonneg (d : NsfrDerivativeInput) : 0 ≤ d.nsfrDerivativeAssets := by
+  simp only [NsfrDerivativeInput.nsfrDerivativeAssets]
+  generalize nettingSetTotals d.contracts = xs
+  induction xs with
+  | nil => exact Rat.le_refl
+  | cons x rest ih =>
+    rw [sumBy_cons]
+    exact Rat.add_nonneg (rat_le_max_right _ _) ih
 
 /-- Attachment C, Paragraph 26 (Netting): An ineligible SFT netting group is treated gross
     (`netNsfrReceivable = nonNeg receivable`), with zero netting offset from `payable`. -/
@@ -717,9 +760,8 @@ theorem netCashOutflows_monotone_inflowCap (totalOutflows : Money) (inflows : Li
 
 /-- Compliance Aggregation (Main Body & Attachments A–C):
     `overallCompliant = true` implies every applicable quantitative requirement is satisfied
-    (LCR AUD & All-Currencies may use the explicit `stressBreachPermitted` exception;
-     MLH requires `triggerRatioValid ∧ ratioCheck.compliant` with NO stress exception;
-     NSFR requires `ratioCheck.compliant`). -/
+    (LCR AUD & All-Currencies and MLH may use the explicit `stressBreachPermitted` exception per
+     Main Body Para 54 & Att B Para 5; NSFR requires `ratioCheck.compliant` at all times). -/
 theorem overallCompliant_implies_all_applicable_quant
     (input : AdiComplianceInput)
     (hno_adj : input.apraAdjustments = [])
@@ -728,17 +770,21 @@ theorem overallCompliant_implies_all_applicable_quant
     let stressOk := input.inFinancialStress &&
       input.notifications.experiencingSevereStress &&
       input.notifications.notifiedApraImmediatelyOfStress
+    let lcrStressOk := stressOk && input.notifications.notifiedApraOfLcrBreach
+    let mlhStressOk := stressOk &&
+      input.notifications.notifiedApraImmediatelyOfMlhShortfall &&
+      input.notifications.advisedApraOfMlhRemedialAction
     (input.profile.requiredAudLcr.isSome →
       match res.lcrAudResult with
-      | some r => r.ratioCheck.compliant = true ∨ stressOk = true
+      | some r => r.ratioCheck.compliant = true ∨ lcrStressOk = true
       | none => False) ∧
     (input.profile.requiredAllCurrenciesLcr.isSome →
       match res.lcrAllCurrenciesResult with
-      | some r => r.ratioCheck.compliant = true ∨ stressOk = true
+      | some r => r.ratioCheck.compliant = true ∨ lcrStressOk = true
       | none => False) ∧
     (input.profile.requiredMlh.isSome →
       match res.mlhResult with
-      | some r => r.triggerRatioValid = true ∧ r.ratioCheck.compliant = true
+      | some r => r.triggerRatioValid = true ∧ ((r.ratioCheck.compliant = true ∧ r.aboveTriggerRatio = true) ∨ mlhStressOk = true)
       | none => False) ∧
     (input.profile.requiredNsfr.isSome →
       match res.nsfrResult with
@@ -746,7 +792,7 @@ theorem overallCompliant_implies_all_applicable_quant
       | none => False) := by
   dsimp only [evaluateAdiCompliance] at h ⊢
   rw [hno_adj] at h ⊢
-  simp only [List.foldl_nil] at h ⊢
+  simp only [List.filter_nil, List.map_nil, List.foldl_nil] at h ⊢
   rcases (Bool.and_eq_true _ _).mp h with ⟨_, hq⟩
   simp only [Bool.and_eq_true] at hq
   rcases hq with ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hlcrAud, hlcrAll⟩, _⟩, _⟩, hmlh⟩, _⟩, hnsfr⟩, _⟩, _⟩, _⟩, _⟩, _⟩, _⟩
@@ -784,7 +830,7 @@ theorem overallCompliant_implies_all_applicable_quant
       | none => simp [hres] at hmlh
       | some mlhIn =>
         simp only [hres] at hmlh ⊢
-        simpa [Bool.and_eq_true] using hmlh
+        simpa [Bool.and_eq_true, Bool.or_eq_true] using hmlh
   · intro hsome
     cases hreq : input.profile.requiredNsfr with
     | none => simp [hreq] at hsome
@@ -851,7 +897,7 @@ theorem computeCappedForeignSovHqla1_empty_caps_zero
         match ([] : List (Currency × Money)).filter (fun (c', _) => c' == c) with
         | [] => acc
         | (_, cap0) :: rest =>
-          acc + min (sumBy ((assets.filter (fun a => a.category == .hqla1 && a.isNonZeroRwForeignSovInForeignCurrency)).filter (·.currency == c)) (HqlaAsset.valueAfterHaircut basis))
+          acc + min (sumBy ((assets.filter (fun a => a.category == .hqla1 && a.isNonZeroRwForeignSovInForeignCurrency)).filter (·.currency == c)) (HqlaAsset.cappedValue basis assets []))
             (rest.foldl (fun m (_, c'') => min m (nonNeg c'')) (nonNeg cap0))) acc = acc by
     exact h _ 0
   intro cs
@@ -886,13 +932,14 @@ theorem computeCappedForeignSovHqla1_single_asset_le_cap
     preserves `evaluateMlh`. -/
 theorem mlh_split_asset_invariant (minRate : Rate) (a : MLH.MlhAsset)
     (v₁ v₂ : Money) (hv1 : 0 ≤ v₁) (hv2 : 0 ≤ v₂)
-    (rest : List MLH.MlhAsset) (placements : Money) (liabs : List MLH.MlhLiabilityItem) (trig : Rate) :
-    MLH.evaluateMlh minRate
-      { assets := { a with marketValue := v₁ + v₂ } :: rest
-      , placementsByOtherAdis := placements, liabilities := liabs, triggerRatio := trig } =
-    MLH.evaluateMlh minRate
-      { assets := { a with marketValue := v₁ } :: { a with marketValue := v₂ } :: rest
-      , placementsByOtherAdis := placements, liabilities := liabs, triggerRatio := trig } := by
+    (rest : List MLH.MlhAsset) (placements : Money) (liabs : List MLH.MlhLiabilityItem) (trig : Rate)
+    (asOf : ObservationContext) :
+    { MLH.evaluateMlh minRate
+      { asOf, assets := { a with marketValue := v₁ + v₂ } :: rest
+      , placementsByOtherAdis := placements, liabilities := liabs, triggerRatio := trig } with dataIssues := [] } =
+    { MLH.evaluateMlh minRate
+      { asOf, assets := { a with marketValue := v₁ } :: { a with marketValue := v₂ } :: rest
+      , placementsByOtherAdis := placements, liabilities := liabs, triggerRatio := trig } with dataIssues := [] } := by
   have heq_elig : ({ a with marketValue := v₁ + v₂ } : MLH.MlhAsset).isEligible = a.isEligible ∧
       ({ a with marketValue := v₁ } : MLH.MlhAsset).isEligible = a.isEligible ∧
       ({ a with marketValue := v₂ } : MLH.MlhAsset).isEligible = a.isEligible := by

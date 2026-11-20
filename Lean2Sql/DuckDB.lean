@@ -222,6 +222,7 @@ def compileRelToWhere : RelExpr → Option (String × Option SqlExpr)
   | .groupBy _ _ _ => none
   | .window _ _ => none
   | .leftJoin _ _ _ => none
+  | .leftJoinOn _ _ _ => none
 
 def compileProgram (prog : Program) : Option SqlProgram := do
   let lets ← prog.lets.mapM (fun (varName, rhs) =>

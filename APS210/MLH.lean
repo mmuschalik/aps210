@@ -1,6 +1,9 @@
 import APS210.Basic
+import APS210.Facts
 
 namespace APS210.MLH
+
+open APS210.Facts
 
 /-- Attachment B, Paragraph 2(a)–(g): Eligible MLH liquid asset categories. -/
 inductive MlhAssetCategory where
@@ -42,6 +45,10 @@ structure MlhAsset where
   liquidatableWithinTwoBusinessDays : Bool := false
   /-- Para 4: Optional numeric liquidation horizon in business days (must be <= 2 when supplied). -/
   liquidationBusinessDays : Option Nat := none
+  /-- Para 2(g): Explicit APRA approval for `apraApprovedOtherSecurities` (defaults true for
+      other categories; must be true when `category == .apraApprovedOtherSecurities`). -/
+  apraApproved : Bool := true
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 def MlhAsset.requiresDebtCriteria (a : MlhAsset) : Bool :=
@@ -54,7 +61,8 @@ def MlhAsset.isEligible (a : MlhAsset) : Bool :=
   let daysOk := match a.liquidationBusinessDays with
     | some d => d <= 2
     | none => true
-  a.unencumberedOrApraApproved && debtOk && a.liquidatableWithinTwoBusinessDays && daysOk
+  let apraOk := a.category != .apraApprovedOtherSecurities || a.apraApproved
+  a.unencumberedOrApraApproved && debtOk && a.liquidatableWithinTwoBusinessDays && daysOk && apraOk
 
 def MlhAsset.eligibleValue (a : MlhAsset) : Money :=
   if a.isEligible then nonNeg a.marketValue else 0
@@ -65,6 +73,7 @@ structure MlhLiabilityItem where
   isOnBalanceSheetOrIrrevocableCommitment : Bool := true
   apraApprovedExclusion : Bool := false
   amount : Money
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 def MlhLiabilityItem.includedAmount (l : MlhLiabilityItem) : Money :=
@@ -75,6 +84,8 @@ def MlhLiabilityItem.includedAmount (l : MlhLiabilityItem) : Money :=
 
 /-- Inputs for Attachment B MLH calculation. -/
 structure MlhInput where
+  /-- Reporting date (`validAt`) and data cut (`knownAt`) this calculation is for. -/
+  asOf : ObservationContext
   assets : List MlhAsset
   /-- Para 2(f): Placements by other ADIs to be netted against deposits held with other ADIs. -/
   placementsByOtherAdis : Money := 0
@@ -90,6 +101,7 @@ structure MlhResult where
   ratioCheck : RatioCheck
   triggerRatioValid : Bool
   aboveTriggerRatio : Bool
+  dataIssues : List DataIssue
   deriving DecidableEq, Repr
 
 /-- Compute MLH ratio and check compliance against `requiredMinRate` (default 9%, para 57).
@@ -109,12 +121,15 @@ def evaluateMlh
   let rc := checkRatio totalLiquid totalLiab requiredMinRate
   let triggerValid := input.triggerRatio > requiredMinRate
   let aboveTrigger :=
-    if totalLiab <= 0 then totalLiquid >= 0
+    if totalLiab <= 0 then totalLiquid > 0
     else totalLiquid >= input.triggerRatio * totalLiab
   { eligibleLiquidAssets := totalLiquid
     totalLiabilities := totalLiab
     ratioCheck := rc
     triggerRatioValid := triggerValid
-    aboveTriggerRatio := aboveTrigger }
+    aboveTriggerRatio := aboveTrigger
+    dataIssues :=
+      (input.assets.flatMap fun a => observationIssues input.asOf a.id a.observation) ++
+      (input.liabilities.flatMap fun l => observationIssues input.asOf l.id l.observation) }
 
 end APS210.MLH

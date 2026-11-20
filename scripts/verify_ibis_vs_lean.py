@@ -18,6 +18,7 @@ def run_case(
         "is_debt_security",
         "liquidatable_within_two_business_days",
         "liquidation_days_ok",
+        "apra_approved",
     ]
     liab_cols = [
         "is_on_balance_sheet_or_irrevocable",
@@ -36,6 +37,7 @@ def run_case(
                 "is_debt_security": "boolean",
                 "liquidatable_within_two_business_days": "boolean",
                 "liquidation_days_ok": "boolean",
+                "apra_approved": "boolean",
             }
         ),
     )
@@ -79,10 +81,12 @@ def main():
                 True,
                 True,
                 True,
+                True,
             ),
             (
                 "net_deposits_with_other_adis_two_business_days",
                 Decimal(5),
+                True,
                 True,
                 True,
                 True,
@@ -95,6 +99,7 @@ def main():
                 Decimal(10),
                 True,
                 False,
+                True,
                 True,
                 True,
                 True,
@@ -131,6 +136,7 @@ def main():
                 False,
                 True,
                 True,
+                True,
             ),
             (
                 "net_deposits_with_other_adis_two_business_days",
@@ -139,6 +145,7 @@ def main():
                 True,
                 True,
                 False,
+                True,
                 True,
                 True,
             ),
@@ -168,9 +175,10 @@ def main():
         expected={
             "eligible_liquid_assets": Decimal(0),
             "total_liabilities": Decimal(0),
-            "compliant": True,
+            # checkRatio: an empty calculation (0 / 0) is not compliant.
+            "compliant": False,
             "trigger_ratio_valid": True,
-            "above_trigger_ratio": True,
+            "above_trigger_ratio": False,
         },
     )
 

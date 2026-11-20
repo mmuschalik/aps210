@@ -7,6 +7,8 @@ import APS210.CashFlows
 
 namespace APS210
 
+open APS210.Facts
+
 /-- Explicit buffer enforcement policy required for quantitative compliance (Attachment A / Attachment C). -/
 inductive BufferPolicy where
   | enforceAllBuffers
@@ -26,8 +28,33 @@ inductive ApraAdjustmentRule where
   | excludeNsfr
   deriving DecidableEq, Repr
 
+/-- Paragraph 71: An APRA adjustment or exclusion with the evidence of APRA's approval. -/
+structure ApraAdjustment where
+  rule : ApraAdjustmentRule
+  /-- Reference to APRA's written approval. Only a known, non-empty reference is applied. -/
+  approval : Reading String
+  observation : ObservationContext
+  deriving DecidableEq, Repr
+
+def ApraAdjustment.approved (a : ApraAdjustment) : Bool :=
+  match a.approval with
+  | .known ref => !ref.isEmpty
+  | _ => false
+
+def ApraAdjustment.dataIssues (a : ApraAdjustment) : List DataIssue :=
+  let rid := s!"apra-adjustment {repr a.rule}"
+  match a.approval with
+  | .known ref =>
+    if ref.isEmpty then
+      [{ recordId := rid, field := "approval", kind := .unknownReading, reason := "empty approval reference",
+         treatment := "not applied; standard minimum used" }]
+    else []
+  | r => readingIssues rid "approval" "not applied; standard minimum used" r
+
 /-- Complete quantitative and qualitative compliance input for an ADI under APS 210. -/
 structure AdiComplianceInput where
+  /-- Reporting date (`validAt`) and data cut (`knownAt`) this assessment is for. -/
+  asOf : ObservationContext
   profile : Governance.AdiProfile
   boardAndManagement : Governance.BoardAndManagementGovernance
   framework : Governance.LiquidityFramework
@@ -58,8 +85,9 @@ structure AdiComplianceInput where
   hasApraAdjustmentOrExclusion : Bool := false
   /-- Paragraph 71: ADI complies with any APRA-adjusted or excluded requirement. -/
   apraAdjustmentsComplied : Bool := false
-  /-- Paragraph 71: Executable APRA adjustments/exclusions applied to requirement minimums. -/
-  apraAdjustments : List ApraAdjustmentRule := []
+  /-- Paragraph 71: APRA adjustments/exclusions applied to requirement minimums. Only adjustments with
+      known APRA approval are applied; the others are reported in `dataIssues`. -/
+  apraAdjustments : List ApraAdjustment := []
   /-- Explicit buffer enforcement policy (required: `none` fails quantitative compliance). -/
   bufferPolicy : Option BufferPolicy := none
   /-- Paragraph 72: Whether the ADI seeks to rely on a prior APRA exemption or discretion. -/
@@ -69,7 +97,12 @@ structure AdiComplianceInput where
   /-- Paragraph 36: Optional multi-horizon contractual cash flows and liquidity buffer
       for cash-flow projection survival check. -/
   scheduledCashFlows : List CashFlows.ContractualCashFlow := []
+  scheduledCollateral : List CollateralMovement := []
   cashFlowSurvivalBuffer : Option Money := none
+  /-- Paragraph 43(a): Optional per-currency liquid buffers for multi-currency cash-flow survival
+      checks (currencies absent from this list fall back to `0` when the list is non-empty, or to
+      `cashFlowSurvivalBuffer` when empty). -/
+  perCurrencySurvivalBuffers : List (Currency × Money) := []
   deriving DecidableEq, Repr
 
 /-- Complete compliance assessment output for an ADI under APS 210. -/
@@ -79,6 +112,7 @@ structure AdiComplianceResult where
   overallCompliant : Bool
   allBuffersMet : Bool := true
   mlhAboveTrigger : Option Bool := none
+  mlhLevel2AboveTrigger : Option Bool := none
   cashFlowLadder : List CashFlows.CashFlowLadderRow := []
   cashFlowSurvivalMet : Bool := true
   lcrAudResult : Option LCR.LcrResult := none
@@ -89,6 +123,9 @@ structure AdiComplianceResult where
   mlhLevel2Result : Option MLH.MlhResult := none
   nsfrResult : Option NSFR.NsfrResult := none
   nsfrLevel2Result : Option NSFR.NsfrResult := none
+  /-- Inputs that were not known or did not match `asOf`, across every calculation, with the
+      treatment applied. -/
+  dataIssues : List DataIssue := []
   deriving DecidableEq, Repr
 
 private def withClfLimit (lcrRes : Option LCR.LcrResult) (nsfrIn : NSFR.NsfrInput) : NSFR.NsfrInput :=
@@ -121,14 +158,15 @@ def evaluateAdiCompliance (input : AdiComplianceInput) : AdiComplianceResult :=
     | .locallyIncorporated => true
   let qualOk := baseGovOk && stressOk && locOk
 
-  let effReqLcrAud := input.apraAdjustments.foldl (fun acc r => match r with
-    | .overrideMinLcrAud m => some m | .excludeLcrAud => none | _ => acc) input.profile.requiredAudLcr
-  let effReqLcrAll := input.apraAdjustments.foldl (fun acc r => match r with
-    | .overrideMinLcrAll m => some m | .excludeLcrAll => none | _ => acc) input.profile.requiredAllCurrenciesLcr
-  let effReqMlh := input.apraAdjustments.foldl (fun acc r => match r with
-    | .overrideMinMlh m => some m | .excludeMlh => none | _ => acc) input.profile.requiredMlh
-  let effReqNsfr := input.apraAdjustments.foldl (fun acc r => match r with
-    | .overrideMinNsfr m => some m | .excludeNsfr => none | _ => acc) input.profile.requiredNsfr
+  let approvedRules := (input.apraAdjustments.filter (·.approved)).map (·.rule)
+  let effReqLcrAud := approvedRules.foldl (fun acc r => match r with
+    | .overrideMinLcrAud m => some (nonNeg m) | .excludeLcrAud => none | _ => acc) input.profile.requiredAudLcr
+  let effReqLcrAll := approvedRules.foldl (fun acc r => match r with
+    | .overrideMinLcrAll m => some (nonNeg m) | .excludeLcrAll => none | _ => acc) input.profile.requiredAllCurrenciesLcr
+  let effReqMlh := approvedRules.foldl (fun acc r => match r with
+    | .overrideMinMlh m => some (nonNeg m) | .excludeMlh => none | _ => acc) input.profile.requiredMlh
+  let effReqNsfr := approvedRules.foldl (fun acc r => match r with
+    | .overrideMinNsfr m => some (nonNeg m) | .excludeNsfr => none | _ => acc) input.profile.requiredNsfr
 
   let lcrAudRes := match effReqLcrAud, input.lcrAudInput with
     | some minRate, some lcrIn =>
@@ -175,33 +213,41 @@ def evaluateAdiCompliance (input : AdiComplianceInput) : AdiComplianceResult :=
     input.inFinancialStress &&
     input.notifications.experiencingSevereStress &&
     input.notifications.notifiedApraImmediatelyOfStress
+  -- Att A Para 5: LCR breach during financial stress also requires immediate LCR breach notification.
+  let lcrStressBreachPermitted :=
+    stressBreachPermitted && input.notifications.notifiedApraOfLcrBreach
+  -- Att B Para 6: MLH shortfall during financial stress also requires immediate MLH notification & remedial plan.
+  let mlhStressBreachPermitted :=
+    stressBreachPermitted &&
+    input.notifications.notifiedApraImmediatelyOfMlhShortfall &&
+    input.notifications.advisedApraOfMlhRemedialAction
 
   let lcrAudOk := match effReqLcrAud, lcrAudRes with
     | none, _ => true
-    | some _, some r => r.ratioCheck.compliant || stressBreachPermitted
+    | some _, some r => r.ratioCheck.compliant || lcrStressBreachPermitted
     | some _, none => false
   let lcrAllOk := match effReqLcrAll, lcrAllRes with
     | none, _ => true
-    | some _, some r => r.ratioCheck.compliant || stressBreachPermitted
+    | some _, some r => r.ratioCheck.compliant || lcrStressBreachPermitted
     | some _, none => false
   let lcrAudL2Ok := if !input.hasLevel2Group then true else
     match effReqLcrAud, lcrAudL2Res with
     | none, _ => true
-    | some _, some r => r.ratioCheck.compliant || stressBreachPermitted
+    | some _, some r => r.ratioCheck.compliant || lcrStressBreachPermitted
     | some _, none => false
   let lcrAllL2Ok := if !input.hasLevel2Group then true else
     match effReqLcrAll, lcrAllL2Res with
     | none, _ => true
-    | some _, some r => r.ratioCheck.compliant || stressBreachPermitted
+    | some _, some r => r.ratioCheck.compliant || lcrStressBreachPermitted
     | some _, none => false
   let mlhOk := match effReqMlh, mlhRes with
     | none, _ => true
-    | some _, some r => r.triggerRatioValid && r.ratioCheck.compliant
+    | some _, some r => r.triggerRatioValid && ((r.ratioCheck.compliant && r.aboveTriggerRatio) || mlhStressBreachPermitted)
     | some _, none => false
   let mlhL2Ok := if !input.hasLevel2Group then true else
     match effReqMlh, mlhL2Res with
     | none, _ => true
-    | some _, some r => r.triggerRatioValid && r.ratioCheck.compliant
+    | some _, some r => r.triggerRatioValid && ((r.ratioCheck.compliant && r.aboveTriggerRatio) || mlhStressBreachPermitted)
     | some _, none => false
   let nsfrOk := match effReqNsfr, nsfrRes with
     | none, _ => true
@@ -224,14 +270,16 @@ def evaluateAdiCompliance (input : AdiComplianceInput) : AdiComplianceResult :=
     | some m, some rc =>
       match rc.ratio with
       | some r => decide (r ≥ m + floor)
-      | none => true
+      | none => rc.compliant
     | some _, none => false
     | none, _ => true
-  let bufferPolicyOk := match input.bufferPolicy with
-    | none => false
-    | some .enforceAllBuffers => allBuffersMet
-    | some .waivedDuringStress => allBuffersMet || stressBreachPermitted
-    | some (.customBufferFloor lAud lAll nFloor) =>
+  let bufferPolicyOk := match input.profile.classification, input.bufferPolicy with
+    -- MLH ADIs manage buffers via their trigger ratio (Att B Para 5), not LCR/NSFR BufferPolicy.
+    | .mlh, none => true
+    | .lcr, none => false
+    | _, some .enforceAllBuffers => allBuffersMet
+    | _, some .waivedDuringStress => allBuffersMet || stressBreachPermitted
+    | _, some (.customBufferFloor lAud lAll nFloor) =>
       meetsFloor effReqLcrAud (lcrAudRes.map (·.ratioCheck)) lAud &&
       meetsFloor effReqLcrAll (lcrAllRes.map (·.ratioCheck)) lAll &&
       meetsFloor effReqNsfr (nsfrRes.map (·.ratioCheck)) nFloor &&
@@ -244,13 +292,22 @@ def evaluateAdiCompliance (input : AdiComplianceInput) : AdiComplianceResult :=
     | some s => s.isCompliant
     | none => true
   let apraDiscretionOk :=
-    (!input.hasApraAdjustmentOrExclusion || !input.apraAdjustments.isEmpty || input.apraAdjustmentsComplied) &&
+    (!input.hasApraAdjustmentOrExclusion || input.apraAdjustmentsComplied) &&
     (!input.seeksRelianceOnPriorDiscretion || input.notifiedApraOfRelianceOrPriorDiscretion)
   let ladder :=
-    if input.scheduledCashFlows.isEmpty then []
-    else CashFlows.projectCashFlowLadder input.scheduledCashFlows
+    if input.scheduledCashFlows.isEmpty && input.scheduledCollateral.isEmpty then []
+    else CashFlows.projectCashFlowLadder input.scheduledCashFlows none input.scheduledCollateral (some input.asOf.validAt)
   let cfSurvivalOk := match input.cashFlowSurvivalBuffer with
-    | some buf => CashFlows.hasPositiveSurvivalBuffer buf input.scheduledCashFlows
+    | some buf =>
+      let aggOk := CashFlows.hasPositiveSurvivalBuffer buf input.scheduledCashFlows none input.scheduledCollateral (some input.asOf.validAt)
+      let currencies := ((input.scheduledCashFlows.map (·.currency)) ++ (input.scheduledCollateral.map (·.currency))).eraseDups
+      let perCcyOk := if currencies.length <= 1 then true
+        else currencies.all (fun c =>
+          let cBuf :=
+            if input.perCurrencySurvivalBuffers.isEmpty then buf
+            else (input.perCurrencySurvivalBuffers.find? (fun (cur, _) => cur == c)).map (·.2) |>.getD 0
+          CashFlows.hasPositiveSurvivalBuffer cBuf input.scheduledCashFlows (some c) input.scheduledCollateral (some input.asOf.validAt))
+      aggOk && perCcyOk
     | none => true
 
   let quantOk :=
@@ -262,6 +319,7 @@ def evaluateAdiCompliance (input : AdiComplianceInput) : AdiComplianceResult :=
     overallCompliant := qualOk && quantOk
     allBuffersMet
     mlhAboveTrigger := mlhRes.map (·.aboveTriggerRatio)
+    mlhLevel2AboveTrigger := mlhL2Res.map (·.aboveTriggerRatio)
     cashFlowLadder := ladder
     cashFlowSurvivalMet := cfSurvivalOk
     lcrAudResult := lcrAudRes
@@ -271,7 +329,21 @@ def evaluateAdiCompliance (input : AdiComplianceInput) : AdiComplianceResult :=
     mlhResult := mlhRes
     mlhLevel2Result := mlhL2Res
     nsfrResult := nsfrRes
-    nsfrLevel2Result := nsfrL2Res }
+    nsfrLevel2Result := nsfrL2Res
+    dataIssues :=
+      (lcrAudRes.map (·.dataIssues) |>.getD []) ++
+      (lcrAllRes.map (·.dataIssues) |>.getD []) ++
+      (lcrAudL2Res.map (·.dataIssues) |>.getD []) ++
+      (lcrAllL2Res.map (·.dataIssues) |>.getD []) ++
+      (mlhRes.map (·.dataIssues) |>.getD []) ++
+      (mlhL2Res.map (·.dataIssues) |>.getD []) ++
+      (nsfrRes.map (·.dataIssues) |>.getD []) ++
+      (nsfrL2Res.map (·.dataIssues) |>.getD []) ++
+      (input.apraAdjustments.flatMap fun a =>
+        a.dataIssues ++ observationIssues input.asOf "apra-adjustment" a.observation) ++
+      CashFlows.cashFlowDataIssues input.scheduledCashFlows input.scheduledCollateral ++
+      (input.scheduledCashFlows.flatMap fun f =>
+        observationIssues input.asOf f.id f.obligation.observation) }
 
 /-- Paragraph 54 & Paragraph 60: Continuous-basis ("at all times") compliance across
     a non-empty sequence of reporting/monitoring snapshots. -/

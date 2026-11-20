@@ -88,9 +88,10 @@ def emitWindowSpec (spec : WindowSpec) : String :=
   let framePart :=
     if spec.orderBy.isEmpty then []
     else
-      match spec.precedingDays? with
-      | some pd => [s!"preceding=ibis.interval(days={pd})", "following=0"]
-      | none =>
+      match spec.precedingDays?, spec.followingDays? with
+      | some pd, none => [s!"preceding=ibis.interval(days={pd})", "following=0"]
+      | none, some fd => ["preceding=0", s!"following=ibis.interval(days={fd})"]
+      | _, _ =>
         let prec := match spec.preceding? with | none => "None" | some p => toString p
         let foll := match spec.following? with | none => "None" | some f => toString f
         [s!"preceding={prec}", s!"following={foll}"]
@@ -125,8 +126,26 @@ def emitRel : RelExpr → String
         let eStr := emitSExpr (some "t") expr
         s!"{outCol}=lambda t: ibis.coalesce({emitAggCall op eStr}.over({wStr}), {emitAggDefault op})")
     s!"({inp}).mutate({String.intercalate ", " winAssigns})"
+  -- Ibis keeps the right key of a left join as `<key>_right`; drop it so that chained joins on the
+  -- same key do not collide (the IR row keeps only the left key's value).
   | .leftJoin keyCol left right =>
-    s!"({emitRel left}).join({emitRel right}, \"{keyCol}\", how=\"left\")"
+    s!"({emitRel left}).join({emitRel right}, \"{keyCol}\", how=\"left\").drop(\"{keyCol}_right\")"
+  | .leftJoinOn keyCols left right =>
+    let ks := String.intercalate ", " (keyCols.map (fun k => s!"\"{k}\""))
+    let drops := String.intercalate ", " (keyCols.map (fun k => s!"\"{k}_right\""))
+    s!"({emitRel left}).join({emitRel right}, [{ks}], how=\"left\").drop({drops})"
+
+-- Regression: chained left joins on one key (LCR Level 2 group scale, cash-flow option aggregates,
+-- upstream position options) must not leave a second `<key>_right` column (Ibis IntegrityError).
+example :
+    emitRel (.leftJoin "k" (.leftJoin "k" (.table "a") (.table "b")) (.table "c")) =
+      "((a).join(b, \"k\", how=\"left\").drop(\"k_right\")).join(c, \"k\", how=\"left\").drop(\"k_right\")" := by
+  native_decide
+
+example :
+    emitRel (.leftJoinOn ["k", "c"] (.table "a") (.table "b")) =
+      "(a).join(b, [\"k\", \"c\"], how=\"left\").drop(\"k_right\", \"c_right\")" := by
+  native_decide
 
 /-- Emit a complete `Program` as a self-contained deterministic Python module using `ibis`. -/
 def emitProgram (prog : Program) : String :=

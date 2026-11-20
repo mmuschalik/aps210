@@ -1,8 +1,11 @@
 import APS210.Basic
+import APS210.Facts
 import APS210.ExternalStandards
 import APS210.LCR.HQLA
 
 namespace APS210.Upstream
+
+open APS210.Facts
 
 /-- Days since 1970-01-01 (proleptic Gregorian calendar). -/
 abbrev EpochDate := Int
@@ -62,26 +65,48 @@ inductive NsfrBucket where
   | ge1y
   deriving DecidableEq, Repr
 
+/-- A balance-sheet position: who owes it, its contractual maturity, and every option on it with its
+    holder. The maturity used for each rule is derived by `Facts.worstCaseSettlementDate`. -/
 structure PositionRow where
   id : String
+  side : Side
   amount : Money
   maturityDate : EpochDate
-  earliestCallDate : EpochDate
-  hasCallOption : Bool
-  latestExtensionDate : EpochDate := 0
-  hasExtensionOption : Bool := false
+  options : Reading (List ContractOption)
   noticeDays : Rat
   encumbranceEndDate : EpochDate
   isEncumbered : Bool
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
-def PositionRow.effectiveMaturityDate (p : PositionRow) : EpochDate :=
-  if p.hasCallOption then p.earliestCallDate
-  else if p.hasExtensionOption then p.latestExtensionDate
-  else p.maturityDate
+/-- Worst-case maturity date under a regime (Att A paras 45 & 60, Att C paras 8 & 20). With an
+    unknown option list, what we owe matures on the reporting date and what is owed to us has no
+    established maturity (`none`). -/
+def PositionRow.worstCaseMaturityDate (regime : MaturityRegime) (reportingDate : EpochDate)
+    (p : PositionRow) : Option EpochDate :=
+  match p.options with
+  | .known opts => some (worstCaseSettlementDate regime p.side p.maturityDate opts)
+  | _ =>
+    match p.side with
+    | .weOwe => some reportingDate
+    | .owedToUs => none
 
-def PositionRow.residualDays (reportingDate : EpochDate) (p : PositionRow) : Rat :=
-  max p.noticeDays ((p.effectiveMaturityDate - reportingDate : Int) : Rat)
+/-- Residual days to the worst-case maturity (Att A Para 45, Att C Para 8).
+    - For liabilities (`.weOwe`): if options are unknown, maturity is reporting date (0 days).
+      If a withdrawal notice period is specified (`noticeDays > 0`), earliest redemption is the
+      minimum of `noticeDays` and the contractual/option-adjusted residual days (Att C Para 8).
+    - For assets (`.owedToUs`): residual days is at least `noticeDays`. -/
+def PositionRow.residualDays (regime : MaturityRegime) (reportingDate : EpochDate) (p : PositionRow) :
+    Option Rat :=
+  match p.side, p.options with
+  | .weOwe, .unknown _ | .weOwe, .refused _ => some 0
+  | .weOwe, .known opts =>
+    let d := worstCaseSettlementDate regime .weOwe p.maturityDate opts
+    let contractDays := nonNeg ((d - reportingDate : Int) : Rat)
+    some (if p.noticeDays > 0 then min p.noticeDays contractDays else contractDays)
+  | .owedToUs, _ =>
+    (p.worstCaseMaturityDate regime reportingDate).map (fun d =>
+      max p.noticeDays ((d - reportingDate : Int) : Rat))
 
 def PositionRow.encumbranceDays (reportingDate : EpochDate) (p : PositionRow) : Rat :=
   if p.isEncumbered then nonNeg ((p.encumbranceEndDate - reportingDate : Int) : Rat) else 0
@@ -110,6 +135,7 @@ structure DerivativeTrade where
   hasEligibleMna : Bool
   mtmPayable : Money
   mtmReceivable : Money
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 private def insertGroup {α : Type} (key : String) (x : α) :
@@ -123,18 +149,16 @@ private def groupByKey {α : Type} (keyFn : α → String) (xs : List α) : List
   xs.foldl (fun acc x => insertGroup (keyFn x) x acc) []
 
 def netDerivativeOutflowInflow (trades : List DerivativeTrade) : Money × Money :=
-  let eligible := trades.filter (·.hasEligibleMna)
-  let nonMna := trades.filter (fun t => !t.hasEligibleMna)
-  let mnaGroups := groupByKey (·.mnaId) eligible
-  let mnaOut := sumBy mnaGroups (fun (_, grp) =>
-    let netMtm := sumBy grp (fun t => t.mtmPayable - t.mtmReceivable)
-    nonNeg netMtm)
-  let mnaIn := sumBy mnaGroups (fun (_, grp) =>
-    let netMtm := sumBy grp (fun t => t.mtmPayable - t.mtmReceivable)
-    nonNeg (-netMtm))
-  let grossOut := sumBy nonMna (fun t => nonNeg t.mtmPayable)
-  let grossIn := sumBy nonMna (fun t => nonNeg t.mtmReceivable)
-  (mnaOut + grossOut, mnaIn + grossIn)
+  let byMna := groupByKey (·.mnaId) trades
+  byMna.foldl (fun (accOut, accIn) (_, grp) =>
+    if grp.all (·.hasEligibleMna) then
+      let netMtm := sumBy grp (fun t => nonNeg t.mtmPayable - nonNeg t.mtmReceivable)
+      (accOut + nonNeg netMtm, accIn + nonNeg (-netMtm))
+    else
+      let grossOut := sumBy grp (fun t => nonNeg t.mtmPayable)
+      let grossIn := sumBy grp (fun t => nonNeg t.mtmReceivable)
+      (accOut + grossOut, accIn + grossIn)
+  ) (0, 0)
 
 -- ============================================================================
 -- 3. Customer-Group $250k FCS / $2m SME & Att A Para 42 Pool Tainting
@@ -154,7 +178,12 @@ structure DepositAccount where
   productCategory : String
   balance : Money
   hasEarlyWithdrawalNoPenalty : Bool
+  /-- Att A Para 41: Whether the term deposit has no legal withdrawal right or imposes a material
+      penalty for early withdrawal within 30 days (defaults to true for term-deposit rows where
+      `!hasEarlyWithdrawalNoPenalty`). -/
+  noWithdrawalRightOrMaterialPenalty : Bool := true
   residualDays : Rat
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 structure DepositClassificationSummary where
@@ -182,7 +211,7 @@ def evaluateDeposits (accounts : List DepositAccount) : DepositClassificationSum
       else min bal (bal * min tot 250000 / tot)
     else 0
   let isExcludedTerm (a : DepositAccount) : Bool :=
-    a.residualDays > 30 && !(lookupTaint a.productCategory)
+    a.residualDays > 30 && a.noWithdrawalRightOrMaterialPenalty && !(lookupTaint a.productCategory)
   { smeEligibleDeposits := sumBy (accounts.filter isSmeEligible) (fun a => nonNeg a.balance)
   , fcsInsuredDeposits := sumBy accounts fcsInsuredShare
   , excludedTermDeposits := sumBy (accounts.filter isExcludedTerm) (fun a => nonNeg a.balance)
@@ -196,14 +225,17 @@ structure CcyHqla1Position where
   currency : String
   hqla1ForeignSovAmt : Money
   ccyNetOutflow : Money
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 def cappedForeignSovHqla1 (positions : List CcyHqla1Position) : Money :=
   let byCcy := groupByKey (·.currency) positions
   sumBy byCcy (fun (_, grp) =>
-    let totalHqla1 := sumBy grp (·.hqla1ForeignSovAmt)
-    let totalOutflow := sumBy grp (·.ccyNetOutflow)
-    min totalHqla1 (nonNeg totalOutflow))
+    let totalHqla1 := nonNeg (sumBy grp (fun p => nonNeg p.hqla1ForeignSovAmt))
+    let capOutflow := match grp with
+      | [] => 0
+      | p0 :: rest => rest.foldl (fun m p => min m (nonNeg p.ccyNetOutflow)) (nonNeg p0.ccyNetOutflow)
+    min totalHqla1 capOutflow)
 
 -- ============================================================================
 -- 5. Att A Table 3 Row 11(d) 24-Month Rolling 30-Day Collateral Lookback
@@ -212,6 +244,7 @@ def cappedForeignSovHqla1 (positions : List CcyHqla1Position) : Money :=
 structure DailyCollateralFlow where
   valuationDate : EpochDate
   netCollateralFlow : Money
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 private def absRat (x : Rat) : Rat := if x < 0 then -x else x
@@ -222,14 +255,19 @@ private def yearMonthOfEpoch (d : EpochDate) : Int :=
 
 /-- Calendar-date 30-day rolling collateral lookback over trailing 24 months.
     Input contract: missing calendar dates represent zero net collateral flow on that date;
-    lookback validation requires non-empty flows spanning back `<= reportingDate - 23m`
+    evaluates all critical 30-day rolling window endpoints (`d` when an event enters and
+    `min (d + 30) reportingDate` just after an event exits) so sparse series never understate
+    the true 30-day peak.
+    Lookback validation requires non-empty flows spanning back `<= reportingDate - 23m`
     and covering `>= 24` distinct `(year, month)` buckets. -/
 def max30dCollateralOutflowCal (reportingDate : EpochDate) (flows : List DailyCollateralFlow) : Money × Bool :=
   let lookback24m := addMonthsEpoch reportingDate (-24)
   let lookback23m := addMonthsEpoch reportingDate (-23)
   let inWindow := flows.filter (fun f => lookback24m ≤ f.valuationDate && f.valuationDate ≤ reportingDate)
-  let rollingAbs := inWindow.map (fun r =>
-    let frame := inWindow.filter (fun f => r.valuationDate - 29 ≤ f.valuationDate && f.valuationDate ≤ r.valuationDate)
+  let endpoints := (inWindow.flatMap (fun r =>
+    [r.valuationDate, min (r.valuationDate + 30) reportingDate])).eraseDups
+  let rollingAbs := endpoints.map (fun endDate =>
+    let frame := inWindow.filter (fun f => endDate - 29 ≤ f.valuationDate && f.valuationDate ≤ endDate)
     absRat (sumBy frame (·.netCollateralFlow)))
   let maxOut := rollingAbs.foldl max 0
   let hasEarlyCoverage := inWindow.any (fun f => f.valuationDate ≤ lookback23m)
@@ -252,13 +290,22 @@ def max30dCollateralOutflow (flows : List DailyCollateralFlow) : Money :=
 structure MonthlyNetOutflow where
   monthEndDate : EpochDate
   netCashOutflow : Money
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 /-- Select trailing 12-month window `(reportingDate - 12m, reportingDate]`,
-    validate 12 observations across 12 distinct `(year, month)` buckets, and compute the average. -/
+    handling leap-year month-end boundaries (e.g. `2025-02-28` excludes `2024-02-29` so exactly
+    12 calendar month-ends fall in the trailing 12 months), validate 12 observations across 12
+    distinct `(year, month)` buckets, and compute the average. -/
 def avg12mNetOutflowCal (reportingDate : EpochDate) (months : List MonthlyNetOutflow) : Money × Bool :=
   let start12m := addMonthsEpoch reportingDate (-12)
-  let inWindow := months.filter (fun m => start12m < m.monthEndDate && m.monthEndDate ≤ reportingDate)
+  let (ry, rm, rd) := civilFromEpoch reportingDate
+  let isRepMonthEnd := rd == daysInMonth ry rm
+  let startYm := yearMonthOfEpoch start12m
+  let inWindow := months.filter (fun m =>
+    m.monthEndDate ≤ reportingDate &&
+    if isRepMonthEnd then yearMonthOfEpoch m.monthEndDate > startYm
+    else start12m < m.monthEndDate)
   let cnt := inWindow.length
   let distinctMonths := (inWindow.map (fun m => yearMonthOfEpoch m.monthEndDate)).eraseDups.length
   let avg := if cnt == 0 then 0 else sumBy inWindow (·.netCashOutflow) / (cnt : Rat)
@@ -275,6 +322,7 @@ def avg12mNetOutflow (months : List MonthlyNetOutflow) : Money :=
 structure EcaiAssessmentRow where
   exposureId : String
   ratingStr : String
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 def parseCreditRatingStr : String → CreditRating
@@ -309,6 +357,7 @@ structure AmortisationCashflowRow where
   loanId : String
   paymentDate : EpochDate
   principalAmount : Money
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 -- ============================================================================
@@ -324,6 +373,7 @@ structure SftLegRow where
   hqla1Delta : Money
   hqla2aDelta : Money
   hqla2bDelta : Money
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 def SftLegRow.toLcrLeg (s : SftLegRow) : LCR.ShortTermSftLeg :=
@@ -336,6 +386,7 @@ def SftLegRow.toLcrLeg (s : SftLegRow) : LCR.ShortTermSftLeg :=
   , nettingCriteria := some
       { sameCounterparty := s.nettingEligible
       , sameExplicitFinalSettlementDate := s.nettingEligible
+      , notOpenEndedUnwindable := s.nettingEligible
       , legallyEnforceableNettingNormalAndDefault := s.nettingEligible
       , settledNetOrSimultaneously := s.nettingEligible
       }
@@ -354,9 +405,16 @@ structure ClfSummaryInput where
   balanceSheetEffortsExhausted : Bool := false
   clfDrawnNonIntraday : Bool := false
   drawdownAttestedAndNotifiedToApra : Bool := false
-  collateralBecameIneligibleWithin30Days : Bool := false
-  collateralDaysSinceIneligible : Nat := 0
+  /-- Para 16(a): whether CLF collateral meets the operational requirements of paras 22–25. -/
+  collateralOperationalMet : Reading Bool
+  /-- Para 25: days since `recentlyIneligibleCollateralAfterMargin` became ineligible. -/
+  recentlyIneligibleCollateralDays : Reading Nat
+  observation : ObservationContext
   deriving DecidableEq, Repr
+
+private def allOperational (b : Bool) : LCR.HqlaOperationalCompliance :=
+  { convertibleToCashAnytime := b, unencumberedAndControlled := b, controlEvidenced := b,
+    notPledgedOrOperationalCost := b, notRehypothecatedIfReceivedInSft := b }
 
 def ClfSummaryInput.toLcrClfInput (c : ClfSummaryInput) : LCR.ClfInput :=
   { approvedByApra := c.approvedByApra
@@ -371,8 +429,9 @@ def ClfSummaryInput.toLcrClfInput (c : ClfSummaryInput) : LCR.ClfInput :=
   , balanceSheetEffortsExhausted := c.balanceSheetEffortsExhausted
   , clfDrawnNonIntraday := c.clfDrawnNonIntraday
   , drawdownAttestedAndNotifiedToApra := c.drawdownAttestedAndNotifiedToApra
-  , collateralBecameIneligibleWithin30Days := c.collateralBecameIneligibleWithin30Days
-  , collateralDaysSinceIneligible := some c.collateralDaysSinceIneligible
+  , collateralOperational := c.collateralOperationalMet.map allOperational
+  , recentlyIneligibleCollateralDays := c.recentlyIneligibleCollateralDays
+  , observation := c.observation
   }
 
 def ClfSummaryInput.recognised (c : ClfSummaryInput) : Money :=
@@ -383,7 +442,8 @@ def ClfSummaryInput.recognised (c : ClfSummaryInput) : Money :=
 -- ============================================================================
 
 structure UpstreamInput where
-  reportingDate : EpochDate
+  /-- Reporting date (`validAt`) and data cut (`knownAt`) this evaluation is for. -/
+  asOf : ObservationContext
   isAudOnly : Bool := false
   positions : List PositionRow
   derivativeTrades : List DerivativeTrade
@@ -394,8 +454,29 @@ structure UpstreamInput where
   ecaiAssessments : List EcaiAssessmentRow := []
   amortisationCashflows : List AmortisationCashflowRow := []
   sftLegs : List SftLegRow := []
-  clf : ClfSummaryInput := {}
+  clf : ClfSummaryInput
   deriving DecidableEq, Repr
+
+def UpstreamInput.reportingDate (input : UpstreamInput) : EpochDate := input.asOf.validAt
+
+/-- Data issues across every upstream record. -/
+def UpstreamInput.dataIssues (input : UpstreamInput) : List DataIssue :=
+  let obs := observationIssues input.asOf
+  (input.positions.flatMap fun p =>
+    obs p.id p.observation ++
+    readingIssues p.id "options"
+      (match p.side with
+       | .weOwe => "treated as maturing on the reporting date"
+       | .owedToUs => "excluded from the LCR horizon; placed in the NSFR >= 1y bucket") p.options) ++
+  (input.derivativeTrades.flatMap fun t => obs t.tradeId t.observation) ++
+  (input.depositAccounts.flatMap fun d => obs d.accountId d.observation) ++
+  (input.ccyHqla1Positions.flatMap fun c => obs c.currency c.observation) ++
+  (input.dailyCollateralFlows.flatMap fun f => obs s!"collateral-{f.valuationDate}" f.observation) ++
+  (input.monthlyNetOutflows.flatMap fun m => obs s!"month-{m.monthEndDate}" m.observation) ++
+  (input.ecaiAssessments.flatMap fun e => obs e.exposureId e.observation) ++
+  (input.amortisationCashflows.flatMap fun a => obs a.loanId a.observation) ++
+  (input.sftLegs.flatMap fun l => obs l.legId l.observation) ++
+  obs "clf" input.clf.observation ++ input.clf.toLcrClfInput.dataIssues
 
 structure UpstreamResult where
   posLcrWithin30dAmt : Money
@@ -422,13 +503,21 @@ structure UpstreamResult where
   sftUnwindHqla2a : Money
   sftUnwindHqla2b : Money
   clfRecognisedAmount : Money
+  dataIssues : List DataIssue
   deriving DecidableEq, Repr
 
 def evaluateUpstream (input : UpstreamInput) : UpstreamResult :=
-  let lcr30d := sumBy (input.positions.filter (fun p => p.residualDays input.reportingDate ≤ 30)) (·.amount)
-  let nsfrLt6m := sumBy (input.positions.filter (fun p => classifyNsfrBucketCal input.reportingDate (p.residualDays input.reportingDate) == .lt6m)) (·.amount)
-  let nsfr6mTo1y := sumBy (input.positions.filter (fun p => classifyNsfrBucketCal input.reportingDate (p.residualDays input.reportingDate) == .sixMTo1y)) (·.amount)
-  let nsfrGe1y := sumBy (input.positions.filter (fun p => classifyNsfrBucketCal input.reportingDate (p.residualDays input.reportingDate) == .ge1y)) (·.amount)
+  let rd := input.reportingDate
+  let lcrWithin30 (p : PositionRow) : Bool := match p.residualDays .lcr rd with
+    | some d => d ≤ 30
+    | none => false
+  let nsfrBucket (p : PositionRow) : NsfrBucket := match p.residualDays .nsfr rd with
+    | some d => classifyNsfrBucketCal rd d
+    | none => .ge1y
+  let lcr30d := sumBy (input.positions.filter lcrWithin30) (·.amount)
+  let nsfrLt6m := sumBy (input.positions.filter (fun p => nsfrBucket p == .lt6m)) (·.amount)
+  let nsfr6mTo1y := sumBy (input.positions.filter (fun p => nsfrBucket p == .sixMTo1y)) (·.amount)
+  let nsfrGe1y := sumBy (input.positions.filter (fun p => nsfrBucket p == .ge1y)) (·.amount)
   let encGe1y := sumBy (input.positions.filter (fun p =>
     p.isEncumbered && classifyNsfrBucketCal input.reportingDate (p.encumbranceDays input.reportingDate) == .ge1y)) (·.amount)
   let (dOut, dIn) := netDerivativeOutflowInflow input.derivativeTrades
@@ -465,6 +554,7 @@ def evaluateUpstream (input : UpstreamInput) : UpstreamResult :=
   , sftUnwindHqla2a := unwind.deltaHqla2a
   , sftUnwindHqla2b := unwind.deltaHqla2b
   , clfRecognisedAmount := input.clf.recognised
+  , dataIssues := input.dataIssues
   }
 
 /-- Every `PositionRow` is assigned to a unique NSFR maturity bucket. -/

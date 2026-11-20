@@ -29,6 +29,7 @@ def asfCategoryToStr : AsfCategory → String
   | .minorityInterest .sixMonthsToLessThanOneYear => "minority_6m_to_lt1y"
   | .minorityInterest .lessThanSixMonths => "minority_lt6m"
   | .cooperativeNetworkDeposit _ => "coop_network_deposit"
+  | .tradeDatePayablesStandardSettlement => "trade_date_payables"
   | .allOtherLiabilitiesAndEquity => "all_other_liabilities_equity"
 
 def rsfCategoryToStr : RsfCategory → String
@@ -38,7 +39,8 @@ def rsfCategoryToStr : RsfCategory → String
   | .tradeDateReceivablesStandardSettlement => "trade_date_receivables"
   | .unencumberedHqla1NonZeroPctRsf => "unencumbered_hqla1_5pct"
   | .loanToFiLt6mSecuredByHqla1Rehypothecatable => "loan_fi_lt6m_hqla1_rehyp"
-  | .clfThirdPartyDebtOrHostAla => "clf_third_party_or_host_ala"
+  | .clfEligibleThirdPartyDebt => "clf_third_party_debt"
+  | .hostJurisdictionAla => "host_jurisdiction_ala"
   | .selfSecuritisedClfEligible => "self_securitised_clf"
   | .unencumberedHqla2a => "unencumbered_hqla2a"
   | .otherLoanToFiLt6m => "other_loan_fi_lt6m"
@@ -85,6 +87,7 @@ def asfFactorExpr : SExpr :=
     , ("minority_6m_to_lt1y", .litRat 50 100)
     , ("minority_lt6m", .litRat 0 1)
     , ("coop_network_deposit", .binOp .min (.unOp .nonNeg (.col "custom_factor")) (.litRat 85 100))
+    , ("trade_date_payables", .litRat 0 1)
     , ("all_other_liabilities_equity", .litRat 0 1) ]
     (.litRat 0 1)
   .ite (.col "is_interdependent_approved") (.litRat 0 1) base
@@ -97,7 +100,8 @@ def rsfBaseFactorExpr : SExpr :=
     , ("trade_date_receivables", .litRat 0 1)
     , ("unencumbered_hqla1_5pct", .litRat 5 100)
     , ("loan_fi_lt6m_hqla1_rehyp", .litRat 10 100)
-    , ("clf_third_party_or_host_ala", .litRat 10 100)
+    , ("clf_third_party_debt", .litRat 10 100)
+    , ("host_jurisdiction_ala", .litRat 10 100)
     , ("self_securitised_clf", .litRat 10 100)
     , ("unencumbered_hqla2a", .litRat 15 100)
     , ("other_loan_fi_lt6m", .litRat 15 100)
@@ -119,18 +123,35 @@ def rsfBaseFactorExpr : SExpr :=
     (.litRat 1 1)
 
 def rsfEffectiveFactorExpr : SExpr :=
+  let isInitMargin := .binOp .eq (.col "category") (.litStr "initial_margin_ccp_default")
   let customerMarginExempt :=
-    .binOp .and (.binOp .eq (.col "category") (.litStr "initial_margin_ccp_default"))
-      (.col "on_behalf_of_customer_no_guarantee")
+    .binOp .and isInitMargin (.col "on_behalf_of_customer_no_guarantee")
+  let isClfAlaCat :=
+    .binOp .or (.binOp .eq (.col "category") (.litStr "clf_third_party_debt"))
+      (.binOp .or (.binOp .eq (.col "category") (.litStr "host_jurisdiction_ala"))
+        (.binOp .eq (.col "category") (.litStr "self_securitised_clf")))
+  let clfFallback :=
+    .ite (.col "has_excess_clf_fallback_override")
+      (.unOp .nonNeg (.col "excess_clf_fallback_factor"))
+      (.litRat 85 100)
+  let effectiveBase :=
+    .ite (.binOp .and isClfAlaCat (.binOp .eq (.col "encumbrance") (.litStr "six_months_to_less_than_one_year")))
+      clfFallback
+      rsfBaseFactorExpr
+  let standardEnc :=
+    .caseStr (.col "encumbrance")
+      [ ("unencumbered", effectiveBase)
+      , ("less_than_six_months", effectiveBase)
+      , ("six_months_to_less_than_one_year", .binOp .max (.litRat 50 100) effectiveBase)
+      , ("one_year_or_more", .litRat 1 1) ]
+      (.litRat 1 1)
   let encApplied :=
-    .ite (.col "has_exceptional_cb_factor")
-      (.unOp .nonNeg (.col "exceptional_cb_factor"))
-      (.caseStr (.col "encumbrance")
-        [ ("unencumbered", rsfBaseFactorExpr)
-        , ("less_than_six_months", rsfBaseFactorExpr)
-        , ("six_months_to_less_than_one_year", .binOp .max (.litRat 50 100) rsfBaseFactorExpr)
-        , ("one_year_or_more", .litRat 1 1) ]
-        (.litRat 1 1))
+    .ite isInitMargin
+      rsfBaseFactorExpr
+      (.ite (.binOp .and (.col "has_exceptional_cb_factor")
+              (.binOp .ne (.col "encumbrance") (.litStr "unencumbered")))
+        (.binOp .min standardEnc (.unOp .nonNeg (.col "exceptional_cb_factor")))
+        standardEnc)
   .ite (.binOp .or (.col "is_interdependent_approved")
       (.binOp .or (.col "excluded_from_balance_sheet_rsf") customerMarginExempt))
     (.litRat 0 1)
@@ -146,10 +167,11 @@ def obsFactorExpr : SExpr :=
 /-- Complete Attachment C (NSFR) program in the Lean-to-Ibis IR, including CLF 10% RSF caps
     (para 32(a)-(b)) and derivative netting + 20% add-on (paras 9-10, 27-28, 37(b), 37(d)). -/
 def nsfrProgram : Program :=
-  let is32a := .binOp .and (.binOp .eq (.col "category") (.litStr "clf_third_party_or_host_ala"))
+  let inPool (cat : String) : SExpr := .binOp .and (.binOp .eq (.col "category") (.litStr cat))
     (.binOp .eq rsfEffectiveFactorExpr (.litRat 10 100))
-  let is32b := .binOp .and (.binOp .eq (.col "category") (.litStr "self_securitised_clf"))
-    (.binOp .eq rsfEffectiveFactorExpr (.litRat 10 100))
+  let isTp := inPool "clf_third_party_debt"
+  let isAla := inPool "host_jurisdiction_ala"
+  let isSelf := inPool "self_securitised_clf"
   let mkClfBucketRel (pred : SExpr) (limVar : String) (defaultFb : SExpr) : RelExpr :=
     let base :=
       .withColumns
@@ -171,6 +193,34 @@ def nsfrProgram : Program :=
           (.binOp .mul (.litRat 10 100) (.col "within"))
           (.binOp .mul (.col "fb") (.col "excess"))) ]
       windowed
+  -- Paras 9 & 27: per netting set, net when every contract has an eligible bilateral netting agreement.
+  let setTotals :=
+    .withColumns
+      [ ("set_assets", .ite (.col "all_eligible") (.unOp .nonNeg (.col "net_mtm")) (.col "pos_mtm"))
+      , ("set_liabs", .ite (.col "all_eligible") (.unOp .nonNeg (.binOp .sub (.litRat 0 1) (.col "net_mtm"))) (.col "neg_mtm")) ]
+      (.groupBy ["netting_set_id"]
+        [ ("all_eligible", .allBool, .col "netting_eligible")
+        , ("net_mtm", .sum, .col "mtm")
+        , ("pos_mtm", .sum, .unOp .nonNeg (.col "mtm"))
+        , ("neg_mtm", .sum, .unOp .nonNeg (.binOp .sub (.litRat 0 1) (.col "mtm"))) ]
+        (.table "deriv_contracts"))
+  -- Para 28: eligible cash VM (known, APS 110 Att D para 23, fully extinguishing MtM) per netting set.
+  let vmEligible :=
+    .binOp .and (.col "vm_known")
+      (.binOp .and (.col "is_cash")
+        (.binOp .and (.col "not_segregated_if_non_qccp")
+          (.binOp .and (.col "calculated_and_exchanged_daily_mtm")
+            (.binOp .and (.col "in_contract_mna_or_ccp_currency")
+              (.binOp .and (.col "in_same_settlement_currency_as_derivative")
+                (.col "fully_extinguishes_mtm_exposure"))))))
+  let vmPerSet :=
+    .groupBy ["netting_set_id"]
+      [("vm_eligible_amt", .sum, .ite vmEligible (.unOp .nonNeg (.col "cash_received")) (.litRat 0 1))]
+      (.table "deriv_vm")
+  let setsAfterVm :=
+    .withColumns
+      [("set_assets_after_vm", .unOp .nonNeg (.binOp .sub (.col "set_assets") (.coalesceZero (.col "vm_eligible_amt"))))]
+      (.leftJoin "netting_set_id" setTotals vmPerSet)
   { name := "evaluate_nsfr"
     tableParams :=
       [ ("asf_items", ["category", "carrying_value", "custom_factor", "is_interdependent_approved"])
@@ -179,72 +229,45 @@ def nsfrProgram : Program :=
           "exceptional_cb_factor", "is_interdependent_approved", "excluded_from_balance_sheet_rsf",
           "has_excess_clf_fallback_override", "excess_clf_fallback_factor"])
       , ("obs_exposures", ["category", "amount"])
-      , ("nsfr_deriv_contracts", ["netting_set_id", "has_eligible_mna", "mtm_asset", "mtm_liability"]) ]
+      , ("deriv_contracts", ["netting_set_id", "mtm", "netting_eligible"])
+      , ("deriv_vm", ["netting_set_id", "cash_received", "vm_known", "is_cash", "not_segregated_if_non_qccp",
+          "calculated_and_exchanged_daily_mtm", "in_contract_mna_or_ccp_currency",
+          "in_same_settlement_currency_as_derivative", "fully_extinguishes_mtm_exposure"]) ]
     scalarParams :=
       [ ("required_min_rate", .rat)
-      , ("gross_deriv_liabilities", .rat), ("variation_margin_posted", .rat)
-      , ("gross_deriv_assets", .rat), ("eligible_cash_vm_received", .rat)
-      , ("cash_vm_eligibility_ok", .bool)
+      , ("variation_margin_posted", .rat)
       , ("has_clf_limit", .bool), ("recognised_clf_limit", .rat), ("host_ala_in_lcr_limit", .rat)
       , ("internal_nsfr_buffer", .rat) ]
     lets :=
       [ ("total_asf", .aggSum (.table "asf_items")
           (.binOp .mul (.unOp .nonNeg (.col "carrying_value")) asfFactorExpr))
       , ("non_clf_rsf", .aggSum
-          (.filter (.unOp .not (.binOp .or is32a is32b)) (.table "rsf_assets"))
+          (.filter (.unOp .not (.binOp .or isTp (.binOp .or isAla isSelf))) (.table "rsf_assets"))
           (.binOp .mul (.unOp .nonNeg (.col "carrying_value")) rsfEffectiveFactorExpr))
-      , ("total_32a", .aggSum (.filter is32a (.table "rsf_assets")) (.unOp .nonNeg (.col "carrying_value")))
       , ("clf_lim", .scalar (.ite (.var "has_clf_limit") (.unOp .nonNeg (.var "recognised_clf_limit")) (.litRat 0 1)))
-      , ("clf_32a_lim", .scalar (.binOp .add (.var "clf_lim") (.unOp .nonNeg (.var "host_ala_in_lcr_limit"))))
-      , ("rem_32a_lim", .scalar (.unOp .nonNeg (.binOp .sub (.var "clf_32a_lim") (.var "total_32a"))))
-      , ("rem_lim", .scalar (.binOp .min (.var "clf_lim") (.var "rem_32a_lim")))
-      , ("rsf_32a", .agg .sum (mkClfBucketRel is32a "clf_32a_lim" (.litRat 85 100)) (.col "item_rsf"))
-      , ("rsf_32b", .agg .sum (mkClfBucketRel is32b "rem_lim" (.litRat 85 100)) (.col "item_rsf"))
-      , ("asset_rsf", .scalar (.binOp .add (.col "non_clf_rsf") (.binOp .add (.col "rsf_32a") (.col "rsf_32b"))))
+      , ("host_ala_lim", .scalar (.unOp .nonNeg (.var "host_ala_in_lcr_limit")))
+      , ("total_tp", .aggSum (.filter isTp (.table "rsf_assets")) (.unOp .nonNeg (.col "carrying_value")))
+      -- Para 32(b): the CLF less the third-party CLF debt given 10% RSF.
+      , ("rem_clf_lim", .scalar (.unOp .nonNeg (.binOp .sub (.var "clf_lim") (.var "total_tp"))))
+      , ("rsf_tp", .agg .sum (mkClfBucketRel isTp "clf_lim" (.litRat 85 100)) (.col "item_rsf"))
+      , ("rsf_ala", .agg .sum (mkClfBucketRel isAla "host_ala_lim" (.litRat 85 100)) (.col "item_rsf"))
+      , ("rsf_ss", .agg .sum (mkClfBucketRel isSelf "rem_clf_lim" (.litRat 85 100)) (.col "item_rsf"))
+      , ("asset_rsf", .scalar (.binOp .add (.col "non_clf_rsf")
+          (.binOp .add (.col "rsf_tp") (.binOp .add (.col "rsf_ala") (.col "rsf_ss")))))
       , ("obs_rsf", .aggSum (.table "obs_exposures")
           (.binOp .mul (.unOp .nonNeg (.col "amount")) obsFactorExpr))
-      , ("deriv_contract_count", .agg .count (.table "nsfr_deriv_contracts") (.col "netting_set_id"))
-      , ("contract_deriv_assets", .agg .sum
-          (.withColumns
-            [ ("set_asset", .ite (.col "all_elig")
-                (.unOp .nonNeg (.col "net_rc")) (.col "pos_gross")) ]
-            (.groupBy ["netting_set_id"]
-              [ ("all_elig", .allBool, .col "has_eligible_mna")
-              , ("net_rc", .sum, .binOp .sub (.unOp .nonNeg (.col "mtm_asset")) (.unOp .nonNeg (.col "mtm_liability")))
-              , ("pos_gross", .sum, .unOp .nonNeg (.col "mtm_asset")) ]
-              (.table "nsfr_deriv_contracts")))
-          (.col "set_asset"))
-      , ("contract_deriv_liab", .agg .sum
-          (.withColumns
-            [ ("set_liab", .ite (.col "all_elig")
-                (.unOp .nonNeg (.binOp .sub (.litRat 0 1) (.col "net_rc"))) (.col "neg_gross")) ]
-            (.groupBy ["netting_set_id"]
-              [ ("all_elig", .allBool, .col "has_eligible_mna")
-              , ("net_rc", .sum, .binOp .sub (.unOp .nonNeg (.col "mtm_asset")) (.unOp .nonNeg (.col "mtm_liability")))
-              , ("neg_gross", .sum, .unOp .nonNeg (.col "mtm_liability")) ]
-              (.table "nsfr_deriv_contracts")))
-          (.col "set_liab"))
-      , ("eff_gross_deriv_liab", .scalar (.ite (.binOp .eq (.var "deriv_contract_count") (.litRat 0 1))
-          (.unOp .nonNeg (.col "gross_deriv_liabilities"))
-          (.col "contract_deriv_liab")))
-      , ("eff_gross_deriv_assets", .scalar (.ite (.binOp .eq (.var "deriv_contract_count") (.litRat 0 1))
-          (.unOp .nonNeg (.col "gross_deriv_assets"))
-          (.col "contract_deriv_assets")))
-      , ("eff_vm_received", .scalar (.ite (.var "cash_vm_eligibility_ok")
-          (.unOp .nonNeg (.col "eligible_cash_vm_received")) (.litRat 0 1)))
-      , ("nsfr_deriv_liab", .scalar (.unOp .nonNeg
-          (.binOp .sub (.col "eff_gross_deriv_liab")
-            (.unOp .nonNeg (.col "variation_margin_posted")))))
-      , ("nsfr_deriv_assets", .scalar (.unOp .nonNeg
-          (.binOp .sub (.col "eff_gross_deriv_assets") (.col "eff_vm_received"))))
+      , ("gross_deriv_liabilities", .agg .sum setsAfterVm (.col "set_liabs"))
+      , ("nsfr_deriv_assets", .agg .sum setsAfterVm (.col "set_assets_after_vm"))
+      , ("nsfr_deriv_liab", .scalar
+          (.binOp .sub (.col "gross_deriv_liabilities") (.unOp .nonNeg (.col "variation_margin_posted"))))
       , ("net_deriv_rsf", .scalar (.unOp .nonNeg
           (.binOp .sub (.col "nsfr_deriv_assets") (.col "nsfr_deriv_liab"))))
-      , ("deriv_addon_rsf", .scalar (.binOp .mul (.litRat 20 100) (.col "eff_gross_deriv_liab")))
+      , ("deriv_addon_rsf", .scalar (.binOp .mul (.litRat 20 100) (.col "gross_deriv_liabilities")))
       , ("total_rsf", .scalar (.binOp .add (.col "asset_rsf")
           (.binOp .add (.col "obs_rsf") (.binOp .add (.col "net_deriv_rsf") (.col "deriv_addon_rsf")))))
       , ("compliant", .scalar
           (.ite (.binOp .le (.col "total_rsf") (.litRat 0 1))
-            (.binOp .le (.litRat 0 1) (.col "total_asf"))
+            (.binOp .lt (.litRat 0 1) (.col "total_asf"))
             (.binOp .le (.binOp .mul (.col "required_min_rate") (.col "total_rsf")) (.col "total_asf"))))
       , ("buffer_met", .scalar
           (.binOp .ge (.col "total_asf")

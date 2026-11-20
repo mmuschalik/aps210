@@ -123,25 +123,39 @@ def complianceGateProgram : Program :=
       , ("apra_adj_complied", .bool)
       , ("seeks_prior_discretion", .bool)
       , ("notified_apra_discretion", .bool)
-      , ("cf_survival_met", .bool) ]
+      , ("cf_survival_met", .bool)
+      -- Paragraph 71: evidence of APRA's approval for each exclusion / override.
+      , ("exclude_lcr_aud_approved", .bool), ("exclude_lcr_all_approved", .bool)
+      , ("exclude_mlh_approved", .bool), ("exclude_nsfr_approved", .bool)
+      , ("override_lcr_aud_approved", .bool), ("override_lcr_all_approved", .bool)
+      , ("override_mlh_approved", .bool), ("override_nsfr_approved", .bool) ]
     lets :=
-      [ ("required_aud_lcr", .scalar
-          (.ite (.col "exclude_lcr_aud") (.litRat 0 1)
-            (.ite (.col "has_override_lcr_aud") (.col "override_lcr_aud")
+      -- Paragraph 71: an exclusion or override without APRA approval evidence is not applied.
+      [ ("eff_exclude_lcr_aud", .scalar (.binOp .and (.col "exclude_lcr_aud") (.col "exclude_lcr_aud_approved")))
+      , ("eff_exclude_lcr_all", .scalar (.binOp .and (.col "exclude_lcr_all") (.col "exclude_lcr_all_approved")))
+      , ("eff_exclude_mlh", .scalar (.binOp .and (.col "exclude_mlh") (.col "exclude_mlh_approved")))
+      , ("eff_exclude_nsfr", .scalar (.binOp .and (.col "exclude_nsfr") (.col "exclude_nsfr_approved")))
+      , ("eff_override_lcr_aud", .scalar (.binOp .and (.col "has_override_lcr_aud") (.col "override_lcr_aud_approved")))
+      , ("eff_override_lcr_all", .scalar (.binOp .and (.col "has_override_lcr_all") (.col "override_lcr_all_approved")))
+      , ("eff_override_mlh", .scalar (.binOp .and (.col "has_override_mlh") (.col "override_mlh_approved")))
+      , ("eff_override_nsfr", .scalar (.binOp .and (.col "has_override_nsfr") (.col "override_nsfr_approved")))
+      , ("required_aud_lcr", .scalar
+          (.ite (.col "eff_exclude_lcr_aud") (.litRat 0 1)
+            (.ite (.col "eff_override_lcr_aud") (.unOp .nonNeg (.col "override_lcr_aud"))
               (.binOp .max (.litRat 100 100) (.col "apra_higher_min_lcr_aud")))))
       , ("required_all_lcr", .scalar
-          (.ite (.col "exclude_lcr_all") (.litRat 0 1)
-            (.ite (.col "has_override_lcr_all") (.col "override_lcr_all")
+          (.ite (.col "eff_exclude_lcr_all") (.litRat 0 1)
+            (.ite (.col "eff_override_lcr_all") (.unOp .nonNeg (.col "override_lcr_all"))
               (.ite (.col "is_locally_incorporated")
                 (.binOp .max (.litRat 100 100) (.col "apra_higher_min_lcr_all"))
                 (.binOp .max (.litRat 40 100) (.col "apra_higher_min_lcr_all"))))))
       , ("required_mlh", .scalar
-          (.ite (.col "exclude_mlh") (.litRat 0 1)
-            (.ite (.col "has_override_mlh") (.col "override_mlh")
+          (.ite (.col "eff_exclude_mlh") (.litRat 0 1)
+            (.ite (.col "eff_override_mlh") (.unOp .nonNeg (.col "override_mlh"))
               (.binOp .max (.litRat 9 100) (.col "apra_higher_min_mlh")))))
       , ("required_nsfr", .scalar
-          (.ite (.col "exclude_nsfr") (.litRat 0 1)
-            (.ite (.col "has_override_nsfr") (.col "override_nsfr")
+          (.ite (.col "eff_exclude_nsfr") (.litRat 0 1)
+            (.ite (.col "eff_override_nsfr") (.unOp .nonNeg (.col "override_nsfr"))
               (.binOp .max (.litRat 100 100) (.col "apra_higher_min_nsfr")))))
       , ("loc_ok", .scalar
           (.binOp .or (.col "is_locally_incorporated")
@@ -157,14 +171,14 @@ def complianceGateProgram : Program :=
           (.binOp .and (.col "in_financial_stress")
             (.binOp .and (.col "experiencing_severe_stress") (.col "notified_apra_immediately"))))
       , ("lcr_aud_ok", .scalar
-          (.binOp .or (.col "exclude_lcr_aud")
+          (.binOp .or (.col "eff_exclude_lcr_aud")
             (.binOp .or (.unOp .not (.col "is_locally_incorporated"))
               (.binOp .and
                 (.binOp .or (.col "lcr_aud_compliant") (.col "stress_breach_permitted"))
                 (.binOp .or (.unOp .not (.col "has_level2_group"))
                   (.binOp .or (.col "lcr_aud_l2_compliant") (.col "stress_breach_permitted")))))))
       , ("lcr_all_ok", .scalar
-          (.binOp .or (.col "exclude_lcr_all")
+          (.binOp .or (.col "eff_exclude_lcr_all")
             (.binOp .and
               (.binOp .or (.col "lcr_all_compliant") (.col "stress_breach_permitted"))
               (.binOp .or (.unOp .not (.col "has_level2_group"))
@@ -174,23 +188,24 @@ def complianceGateProgram : Program :=
             (.binOp .and (.col "lcr_aud_ok") (.col "lcr_all_ok"))))
       , ("mlh_ok", .scalar
           (.binOp .or (.col "is_lcr_adi")
-            (.binOp .or (.col "exclude_mlh")
+            (.binOp .or (.col "eff_exclude_mlh")
               (.binOp .and (.col "mlh_trigger_valid")
-                (.binOp .and
-                  (.binOp .or (.col "mlh_compliant") (.col "stress_breach_permitted"))
+                (.binOp .and (.binOp .or (.col "mlh_compliant") (.col "stress_breach_permitted"))
                   (.binOp .or (.unOp .not (.col "has_level2_group"))
                     (.binOp .or (.col "mlh_l2_compliant") (.col "stress_breach_permitted"))))))))
       , ("nsfr_ok", .scalar
           (.binOp .or (.unOp .not (.binOp .and (.col "is_locally_incorporated") (.col "is_lcr_adi")))
-            (.binOp .or (.col "exclude_nsfr")
+            (.binOp .or (.col "eff_exclude_nsfr")
               (.binOp .and (.col "nsfr_compliant")
                 (.binOp .or (.unOp .not (.col "has_level2_group")) (.col "nsfr_l2_compliant"))))))
       , ("buffer_policy_ok", .scalar
-          (.binOp .and (.col "has_buffer_policy")
-            (.ite (.col "has_custom_buffer_floor")
-              (.col "custom_buffer_floor_met")
-              (.binOp .or (.col "all_buffers_met")
-                (.binOp .and (.col "buffer_policy_waived_during_stress") (.col "stress_breach_permitted"))))))
+          (.ite (.binOp .and (.unOp .not (.col "is_lcr_adi")) (.unOp .not (.col "has_buffer_policy")))
+            (.litBool true)
+            (.binOp .and (.col "has_buffer_policy")
+              (.ite (.col "has_custom_buffer_floor")
+                (.col "custom_buffer_floor_met")
+                (.binOp .or (.col "all_buffers_met")
+                  (.binOp .and (.col "buffer_policy_waived_during_stress") (.col "stress_breach_permitted")))))))
       , ("sec_ok", .scalar
           (.binOp .and (.col "securitisation_lcr_ok")
             (.binOp .or (.unOp .not (.col "spv_excluded_from_mlh_nsfr"))

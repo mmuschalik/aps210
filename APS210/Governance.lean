@@ -9,6 +9,8 @@ namespace APS210.Governance
     but must always include SPV cash flows in LCR. -/
 structure SecuritisationTreatment where
   isOriginatingAdi : Bool
+  /-- Para 5: True if the ADI has any securitisation activities (even if not the originating ADI). -/
+  hasSecuritisationActivities : Bool := false
   meetsAps120CapitalRelief : Bool
   /-- Optional structured APS 120 operational criteria (overrides/refines `meetsAps120CapitalRelief` when supplied). -/
   aps120Criteria : Option External.Aps120CapitalReliefCriteria := none
@@ -25,7 +27,7 @@ def SecuritisationTreatment.mayExcludeFromMlhAndNsfr (s : SecuritisationTreatmen
   s.isOriginatingAdi && reliefMet
 
 def SecuritisationTreatment.isLcrCompliant (s : SecuritisationTreatment) : Bool :=
-  !s.isOriginatingAdi || s.lcrIncludesSpvCashFlows
+  !(s.isOriginatingAdi || s.hasSecuritisationActivities) || s.lcrIncludesSpvCashFlows
 
 def SecuritisationTreatment.isCompliant (s : SecuritisationTreatment) : Bool :=
   s.isLcrCompliant && (!s.spvExcludedFromMlhAndNsfr || s.mayExcludeFromMlhAndNsfr)
@@ -196,14 +198,27 @@ structure LocalOperationalCapacity where
   offshoreOutageMinBusinessDays : Nat
   /-- Para 68: Scenario explicitly covers time zones and public holidays. -/
   coversTimeZonesAndPublicHolidays : Bool := false
+  /-- Para 68: Scenario considers an offshore operational risk event. -/
+  coversOffshoreOperationalRiskEvent : Bool := true
+  /-- Paras 67–68: Local capability to liquidate assets and make/receive payments without offshore staff. -/
+  canLiquidateAssetsAndMakeReceivePaymentsWithoutOffshoreStaff : Bool := true
+  /-- Para 67: Assessment results can be provided to APRA upon request. -/
+  resultsAvailableToApraOnRequest : Bool := true
+  /-- Para 69: Any additional requirements imposed by APRA are met. -/
+  apraAdditionalRequirementsMet : Bool := true
   deriving DecidableEq, Repr
 
-/-- Paragraph 68: Must consider at least 3 business days without offshore staff assistance,
-    accounting for time zones and public holidays. -/
+/-- Paragraphs 67–69: Must consider at least 3 business days without offshore staff assistance
+    (including an offshore operational risk event, time zones and public holidays), with local
+    capability to liquidate assets and make/receive payments. -/
 def LocalOperationalCapacity.isCompliant (loc : LocalOperationalCapacity) : Bool :=
   loc.assessedAtLeastAnnually &&
   loc.offshoreOutageMinBusinessDays >= 3 &&
-  loc.coversTimeZonesAndPublicHolidays
+  loc.coversTimeZonesAndPublicHolidays &&
+  loc.coversOffshoreOperationalRiskEvent &&
+  loc.canLiquidateAssetsAndMakeReceivePaymentsWithoutOffshoreStaff &&
+  loc.resultsAvailableToApraOnRequest &&
+  loc.apraAdditionalRequirementsMet
 
 /-- Main Body Paragraph 14, Main Body Paragraph 70, Attachment A para 5, Attachment B para 6:
     Notification duties (concerns, LCR breach, MLH shortfall, severe stress, ELA). -/
@@ -214,6 +229,8 @@ structure NotificationStatus where
   notifiedApraImmediatelyOfStress : Bool
   intendingToRequestEla : Bool
   notifiedApraPriorToApproachingRba : Bool
+  /-- Para 70: Standing requirement for ALL ADIs to have operational capability to provide
+      ELA information to APRA/RBA (not only when intending to request ELA). -/
   hasOperationalCapabilityForElaInfo : Bool
   /-- Attachment A para 5: Actual or likely breach of LCR requirement. -/
   actualOrLikelyLcrBreach : Bool := false
@@ -221,14 +238,17 @@ structure NotificationStatus where
   /-- Attachment B para 6: Actual or likely shortfall below MLH requirement. -/
   actualOrLikelyMlhShortfall : Bool := false
   notifiedApraImmediatelyOfMlhShortfall : Bool := false
+  /-- Attachment B para 6: Advised APRA of remedial action taken or planned to restore MLH. -/
+  advisedApraOfMlhRemedialAction : Bool := true
   deriving DecidableEq, Repr
 
 def NotificationStatus.isCompliant (n : NotificationStatus) : Bool :=
   (!n.hasLiquidityConcerns || n.notifiedApraOfConcerns) &&
   (!n.experiencingSevereStress || n.notifiedApraImmediatelyOfStress) &&
-  (!n.intendingToRequestEla || (n.notifiedApraPriorToApproachingRba && n.hasOperationalCapabilityForElaInfo)) &&
+  n.hasOperationalCapabilityForElaInfo &&
+  (!n.intendingToRequestEla || n.notifiedApraPriorToApproachingRba) &&
   (!n.actualOrLikelyLcrBreach || n.notifiedApraOfLcrBreach) &&
-  (!n.actualOrLikelyMlhShortfall || n.notifiedApraImmediatelyOfMlhShortfall)
+  (!n.actualOrLikelyMlhShortfall || (n.notifiedApraImmediatelyOfMlhShortfall && n.advisedApraOfMlhRemedialAction))
 
 /-- Paragraphs 52–61: Quantitative minimum thresholds for an ADI,
     accounting for incorporation, APRA classification, and APRA-imposed higher minimums. -/

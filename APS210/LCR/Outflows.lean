@@ -1,25 +1,28 @@
 import APS210.Basic
+import APS210.Facts
 
 namespace APS210.LCR
 
-/-- Attachment A, Paragraph 40, Table 1 – The scorecard criteria for less stable retail deposits. -/
+open APS210.Facts
+
+/-- Attachment A, Paragraph 40, Table 1 – The scorecard criteria for less stable retail deposits.
+    The "+2 above the guarantee limit" criterion is derived from the customer's aggregate balance,
+    not supplied. A criterion that is not known scores as present. -/
 structure LessStableScorecardInput where
-  /-- +2: Deposit balance > government deposit guarantee limit (or > AUD 250,000 if none). -/
-  aboveGuaranteeLimitOr250k : Bool
   /-- +2: Deposit is an on-line account. -/
-  isOnlineAccount : Bool
+  isOnlineAccount : Reading Bool
   /-- +1: Absence of an established customer relationship. -/
-  noEstablishedRelationship : Bool
+  noEstablishedRelationship : Reading Bool
   /-- +1: Deposit is heavily rate-driven. -/
-  isHeavilyRateDriven : Bool
+  isHeavilyRateDriven : Reading Bool
   deriving DecidableEq, Repr
 
 /-- Attachment A, Table 1: Compute scorecard total (0 to 6). -/
-def LessStableScorecardInput.score (s : LessStableScorecardInput) : Nat :=
-  (if s.aboveGuaranteeLimitOr250k then 2 else 0) +
-  (if s.isOnlineAccount then 2 else 0) +
-  (if s.noEstablishedRelationship then 1 else 0) +
-  (if s.isHeavilyRateDriven then 1 else 0)
+def LessStableScorecardInput.score (aboveGuaranteeLimit : Bool) (s : LessStableScorecardInput) : Nat :=
+  (if aboveGuaranteeLimit then 2 else 0) +
+  (if s.isOnlineAccount.affirmativeOrMissing then 2 else 0) +
+  (if s.noEstablishedRelationship.affirmativeOrMissing then 1 else 0) +
+  (if s.isHeavilyRateDriven.affirmativeOrMissing then 1 else 0)
 
 /-- Attachment A, Table 2: Less stable deposit allocations.
     Score 0–2 -> 10%; Score 3 or more -> 25%. -/
@@ -29,6 +32,9 @@ def lessStableRunoffRate (score : Nat) : Rate :=
 /-- Attachment A, Paragraphs 34–43 & 46: Retail and qualifying SME deposit item. -/
 structure RetailDeposit where
   id : String
+  /-- APG 210: the deposit guarantee applies per account-holder per ADI, so balances are
+      aggregated by customer before the guarantee limit is applied. -/
+  customerId : String
   currency : Currency
   balance : Money
   /-- Para 35: If intermediated, whether all four para 35(a)-(d) look-through conditions hold. -/
@@ -37,26 +43,27 @@ structure RetailDeposit where
   /-- Para 41–43: Term deposit > 30d with no legal withdrawal right or material penalty. -/
   residualMaturityOrNoticeGt30Days : Bool := false
   noWithdrawalRightOrMaterialPenalty : Bool := false
+  /-- Para 45: For wholesale (e.g. non-look-through intermediated FI) deposits, there is no legal
+      right to withdraw within 30 days (unlike retail para 41, a material penalty alone does not
+      exclude wholesale funding from the 30-day LCR window). -/
+  noLegalWithdrawalRightWithin30Days : Bool := false
   /-- Para 42: Whether ADI has allowed non-hardship early withdrawal in this category (taints pool). -/
   categoryTaintedByEarlyWithdrawal : Bool := false
   /-- Para 37: Covered by FCS / effective government deposit insurance AND
       (established relationship OR transactional account). -/
   isStable : Bool
-  /-- Para 37 & APG 210: Government deposit guarantee limit (default AUD 250,000 for FCS).
-      Balances above this limit are treated as less stable with +2 on the scorecard. -/
-  guaranteeLimit : Money := 250000
+  /-- Para 37 & APG 210: Government deposit guarantee limit per customer (AUD 250,000 for the FCS).
+      The customer's aggregate balance above this limit is less stable with +2 on the scorecard. -/
+  guaranteeLimit : Money
   /-- APG 210: Notice deposits that have been called run off at 100%. -/
   noticeDepositCalled : Bool := false
-  scorecard : LessStableScorecardInput :=
-    { aboveGuaranteeLimitOr250k := false
-      isOnlineAccount := false
-      noEstablishedRelationship := false
-      isHeavilyRateDriven := false }
+  scorecard : LessStableScorecardInput
   /-- Para 26(a) & 27: Whether the host jurisdiction applies the Basel liquidity framework
       (required for `hostSupervisorOverrideRate` to apply at Level 2). -/
   hostJurisdictionAppliesBasel : Bool := false
   /-- Para 26(a): Optional host-supervisor override rate for offshore Level 2 subsidiaries. -/
   hostSupervisorOverrideRate : Option Rate := none
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 /-- Determine whether a retail deposit is excluded under Paragraphs 41–43. -/
@@ -66,13 +73,42 @@ def RetailDeposit.isExcludedTermDeposit (d : RetailDeposit) : Bool :=
   d.noWithdrawalRightOrMaterialPenalty &&
   !d.categoryTaintedByEarlyWithdrawal
 
-/-- Retail deposit outflow amount with Attachment A para 37 / APG 210 FCS limit split:
-    for stable deposits above `guaranteeLimit` (default $250,000), the insured portion
-    receives 5% and the excess receives the less-stable rate with `+2` on the scorecard. -/
-def RetailDeposit.outflowAmount (basis : ConsolidationBasis := .level1) (d : RetailDeposit) : Money :=
+/-- Determine whether a wholesale (non-look-through intermediated FI) deposit is excluded under
+    Paragraph 45 (earliest contractual maturity or binding notice period > 30 days, with no legal
+    right to withdraw within 30 days). -/
+def RetailDeposit.isExcludedWholesaleTermDeposit (d : RetailDeposit) : Bool :=
+  !d.noticeDepositCalled &&
+  d.residualMaturityOrNoticeGt30Days &&
+  d.noLegalWithdrawalRightWithin30Days &&
+  !d.categoryTaintedByEarlyWithdrawal
+
+/-- APG 210 / Att A Paras 35 & 37: a customer's aggregate retail balance and lowest guarantee
+    limit across their genuine retail deposits in the same currency.
+    - Excludes non-look-through intermediated deposits (Para 35: treated as FI wholesale deposits).
+    - Scopes to the deposit's currency so uninsured foreign-currency deposits (limit = 0) do not
+      wipe out AUD FCS guarantee coverage in All-Currencies LCR. -/
+def customerGuaranteePosition (deposits : List RetailDeposit) (customerId : String)
+    (currency : Currency := .aud) : Money × Money :=
+  let same := deposits.filter (fun x =>
+    x.customerId == customerId &&
+    x.currency == currency &&
+    !(x.isIntermediated && !x.intermediatedLookThroughMet))
+  let total := sumBy same (fun x => nonNeg x.balance)
+  let limit := (same.foldl (fun (acc : Option Money) y =>
+      some (match acc with
+        | none => nonNeg y.guaranteeLimit
+        | some m => min m (nonNeg y.guaranteeLimit))) none).getD 0
+  (total, limit)
+
+/-- Retail deposit outflow given the customer's aggregate balance and guarantee limit (Attachment A
+    para 37, APG 210). For a stable deposit the insured share is allocated pro rata across the customer's
+    deposits: it receives 5% and the remainder the less-stable rate with `+2` on the scorecard. A
+    less-stable deposit scores `+2` when the customer's aggregate exceeds the limit. -/
+def RetailDeposit.outflowGiven (basis : ConsolidationBasis) (customerTotal customerLimit : Money)
+    (d : RetailDeposit) : Money :=
   let bal := nonNeg d.balance
   if d.isIntermediated && !d.intermediatedLookThroughMet then
-    if d.isExcludedTermDeposit then 0
+    if d.isExcludedWholesaleTermDeposit then 0
     else bal * pct 100
   else if d.noticeDepositCalled then
     bal * pct 100
@@ -81,34 +117,47 @@ def RetailDeposit.outflowAmount (basis : ConsolidationBasis := .level1) (d : Ret
   else match basis, d.hostJurisdictionAppliesBasel, d.hostSupervisorOverrideRate with
     | .level2, true, some r => bal * nonNeg r
     | _, _, _ =>
-      let lim := nonNeg d.guaranteeLimit
+      -- Att A Para 40 Table 1: "+2" if balance > government deposit guarantee limit where it exists,
+      -- and in its absence (limit <= 0), where balance > AUD 250,000 equivalent.
+      let scorecardThreshold := if customerLimit > 0 then customerLimit else 250000
+      let above := customerTotal > scorecardThreshold
       if d.isStable then
-        let stablePart := min bal lim
-        let excessPart := nonNeg (bal - lim)
-        let excessScore := { d.scorecard with aboveGuaranteeLimitOr250k := true }.score
-        stablePart * pct 5 + excessPart * lessStableRunoffRate excessScore
+        let insured := if customerTotal <= 0 then 0 else bal * min customerTotal customerLimit / customerTotal
+        let excessPart := nonNeg (bal - insured)
+        insured * pct 5 + excessPart * lessStableRunoffRate (d.scorecard.score true)
       else
-        let effScore :=
-          if bal > lim then { d.scorecard with aboveGuaranteeLimitOr250k := true }.score
-          else d.scorecard.score
-        bal * lessStableRunoffRate effScore
+        bal * lessStableRunoffRate (d.scorecard.score above)
+
+/-- Retail deposit outflow, aggregating the guarantee limit over `deposits` by `(customerId, currency)`. -/
+def RetailDeposit.outflowAmount (basis : ConsolidationBasis) (deposits : List RetailDeposit)
+    (d : RetailDeposit) : Money :=
+  let (total, limit) := customerGuaranteePosition deposits d.customerId d.currency
+  d.outflowGiven basis total limit
 
 /-- Effective blended run-off rate for a retail/qualifying-SME deposit, consistent with
-    `RetailDeposit.outflowAmount` (including the FCS `$250k` split). -/
-def RetailDeposit.runoffRate (basis : ConsolidationBasis := .level1) (d : RetailDeposit) : Rate :=
+    `RetailDeposit.outflowAmount` (including the per-customer guarantee split). -/
+def RetailDeposit.runoffRate (basis : ConsolidationBasis) (deposits : List RetailDeposit)
+    (d : RetailDeposit) : Rate :=
   let bal := nonNeg d.balance
   if bal > 0 then
-    d.outflowAmount basis / bal
+    d.outflowAmount basis deposits / bal
   else if d.isIntermediated && !d.intermediatedLookThroughMet then
-    if d.isExcludedTermDeposit then pct 0
+    if d.isExcludedWholesaleTermDeposit then pct 0
     else pct 100
   else if d.noticeDepositCalled then pct 100
   else if d.isExcludedTermDeposit then pct 0
   else match basis, d.hostJurisdictionAppliesBasel, d.hostSupervisorOverrideRate with
     | .level2, true, some r => nonNeg r
     | _, _, _ =>
+      let (total, limit) := customerGuaranteePosition deposits d.customerId d.currency
+      let scorecardThreshold := if limit > 0 then limit else 250000
       if d.isStable then pct 5
-      else lessStableRunoffRate d.scorecard.score
+      else lessStableRunoffRate (d.scorecard.score (total > scorecardThreshold))
+
+def RetailDeposit.dataIssues (d : RetailDeposit) : List DataIssue :=
+  readingIssues d.id "scorecard.isOnlineAccount" "scored as present (+2)" d.scorecard.isOnlineAccount ++
+  readingIssues d.id "scorecard.noEstablishedRelationship" "scored as present (+1)" d.scorecard.noEstablishedRelationship ++
+  readingIssues d.id "scorecard.isHeavilyRateDriven" "scored as present (+1)" d.scorecard.isHeavilyRateDriven
 
 /-- Attachment A, Paragraph 53, Table 3 – All Cash Outflow Categories
     (for wholesale, secured funding, structured, derivatives, facilities, contingent, and other). -/
@@ -168,6 +217,10 @@ inductive Table3OutflowCategory where
   | otherNonContractualContingent (adiOrApraRate : Rate)
   /-- Para 33: APRA-determined outflow for active collateral swaps. -/
   | collateralSwapApraMethod
+  /-- Forward-starting lending commitments: the committed amount net of the lending rollover
+      already assumed in retail, SME and wholesale inflow rates (A&T CU7, ARS 210 item 15.8):
+      `max(committed - rollover, 0)` at 100%. -/
+  | forwardStartingLending (rolloverAssumedInInflows : Money)
   -- Other contractual cash outflows
   | otherContractualCashOutflows
   deriving DecidableEq, Repr
@@ -224,6 +277,7 @@ def Table3OutflowCategory.rate : Table3OutflowCategory → Rate
   | .affiliatedDealerOrMarketMaker r => nonNeg r
   | .otherNonContractualContingent r => nonNeg r
   | .collateralSwapApraMethod => pct 100
+  | .forwardStartingLending _ => pct 100
   | .otherContractualCashOutflows => pct 100
 
 /-- A wholesale / off-balance-sheet / derivative outflow line item under Table 3. -/
@@ -232,11 +286,14 @@ structure OutflowItem where
   currency : Currency
   category : Table3OutflowCategory
   amount : Money
+  observation : ObservationContext
   deriving DecidableEq, Repr
 
 def OutflowItem.outflowAmount (item : OutflowItem) : Money :=
   match item.category with
   | .derivativeValuationLargest30dFlow24m (some alt) => nonNeg alt
+  | .forwardStartingLending rollover =>
+    nonNeg (nonNeg item.amount - nonNeg rollover) * item.category.rate
   | _ => nonNeg item.amount * item.category.rate
 
 /-- Total expected cash outflows over the 30-day LCR horizon (Attachment A para 30). -/
@@ -244,7 +301,7 @@ def computeTotalExpectedCashOutflows
     (retailDeposits : List RetailDeposit)
     (otherOutflows : List OutflowItem)
     (basis : ConsolidationBasis := .level1) : Money :=
-  sumBy retailDeposits (RetailDeposit.outflowAmount basis) +
+  sumBy retailDeposits (RetailDeposit.outflowAmount basis retailDeposits) +
   sumBy otherOutflows OutflowItem.outflowAmount
 
 /-- Attachment A, Paragraphs 44–46 & Table 3: Classify a non-operational wholesale deposit
@@ -253,8 +310,8 @@ def computeTotalExpectedCashOutflows
 def classifyNonOperationalWholesaleDeposit
     (cp : CounterpartyKind)
     (fullyCoveredByDepositInsurance : Bool)
-    (smeIsStable : Bool := false)
-    (smeScore : Nat := 0) : Table3OutflowCategory :=
+    (smeIsStable : Bool)
+    (smeScore : Nat) : Table3OutflowCategory :=
   match cp with
   | .nonFinancialCorporate | .sovereign _ _ | .centralBank | .rba | .pse _ | .mdb _ =>
     if fullyCoveredByDepositInsurance then .nonOperationalCorpSovCbPseMdbSmeGt2mInsured
@@ -269,13 +326,23 @@ def classifyNonOperationalWholesaleDeposit
       else .nonOperationalCorpSovCbPseMdbSmeGt2mUninsured
   | _ => .nonOperationalOther
 
-/-- Attachment A, Paragraphs 51–52 & Table 3: Classify a committed facility by counterparty
-    and facility type (`isLiquidityFacility = true` vs credit facility). -/
+/-- Attachment A, Paragraphs 46, 51–52 & Table 3: Classify a committed facility by counterparty
+    and facility type (`isLiquidityFacility = true` vs credit facility).
+    Per Para 46, only SMEs with `< AUD 2,000,000` aggregated funding managed as retail receive the
+    5% retail/SME committed facility rate; larger or non-retail-managed SMEs are treated as
+    non-financial corporates (10% credit / 30% liquidity). -/
 def classifyCommittedFacility
     (cp : CounterpartyKind)
     (isLiquidityFacility : Bool) : Table3OutflowCategory :=
   match cp with
-  | .naturalPerson | .sme _ _ => .committedFacilityRetailAndSme
+  | .naturalPerson => .committedFacilityRetailAndSme
+  | .sme aggAud managedAsRetail =>
+    if aggAud < 2000000 && managedAsRetail then
+      .committedFacilityRetailAndSme
+    else if isLiquidityFacility then
+      .committedLiquidityNonFinCorpSovCbPse
+    else
+      .committedCreditNonFinCorpSovCbPse
   | .nonFinancialCorporate | .sovereign _ _ | .centralBank | .rba | .pse _ =>
     if isLiquidityFacility then .committedLiquidityNonFinCorpSovCbPse
     else .committedCreditNonFinCorpSovCbPse
@@ -292,29 +359,34 @@ def classifyCommittedFacility
     balances (5% insured / 25% uninsured) and excess non-operational balances
     (retail 5%/10%/25% for qualifying SMEs < AUD 2m managed as retail;
      20% insured / 40% uninsured for other non-FI corporates/sovereigns/CBs/PSEs/MDBs/SMEs >= 2m;
-     100% for financial institutions and other legal entities). -/
+     100% for financial institutions and other legal entities).
+    `excessCoveredByDepositInsurance?` allows separate insurance status for the excess balance
+    (defaults to `fullyCoveredByDepositInsurance`). -/
 def classifyOperationalDeposit
     (idPrefix : String)
     (currency : Currency)
     (cp : CounterpartyKind)
     (qualifyingOperationalAmount excessAmount : Money)
     (fullyCoveredByDepositInsurance : Bool)
-    (smeIsStable : Bool := false)
-    (smeScore : Nat := 0) : List OutflowItem :=
+    (smeIsStable : Bool)
+    (smeScore : Nat)
+    (observation : ObservationContext)
+    (excessCoveredByDepositInsurance? : Option Bool := none) : List OutflowItem :=
+  let excessInsured := excessCoveredByDepositInsurance?.getD fullyCoveredByDepositInsurance
   let opCat := if fullyCoveredByDepositInsurance then .operationalDepositInsured else .operationalDepositUninsured
   let excessCat := match cp with
     | .nonFinancialCorporate | .sovereign _ _ | .centralBank | .rba | .pse _ | .mdb _ =>
-      if fullyCoveredByDepositInsurance then .excessOperationalNonFinInsured else .excessOperationalNonFinUninsured
+      if excessInsured then .excessOperationalNonFinInsured else .excessOperationalNonFinUninsured
     | .sme aggAud managedAsRetail =>
       if aggAud < 2000000 && managedAsRetail then
         if smeIsStable then .retailStable
         else if smeScore <= 2 then .retailLessStable
         else .retailHigherRunoffLessStable
       else
-        if fullyCoveredByDepositInsurance then .excessOperationalNonFinInsured else .excessOperationalNonFinUninsured
+        if excessInsured then .excessOperationalNonFinInsured else .excessOperationalNonFinUninsured
     | _ => .excessOperationalFi
-  [ { id := idPrefix ++ "-op", currency, category := opCat, amount := qualifyingOperationalAmount }
-  , { id := idPrefix ++ "-excess", currency, category := excessCat, amount := excessAmount } ]
+  [ { id := idPrefix ++ "-op", currency, category := opCat, amount := qualifyingOperationalAmount, observation }
+  , { id := idPrefix ++ "-excess", currency, category := excessCat, amount := excessAmount, observation } ]
 
 /-- Attachment A, Paragraph 51: For a backstop liquidity facility, only the portion
     covering debt maturing within 30 days is treated as a liquidity facility; any
@@ -323,21 +395,24 @@ def classifyLiquidityFacilityWithMaturingDebt
     (idPrefix : String)
     (currency : Currency)
     (cp : CounterpartyKind)
-    (totalFacilityAmount debtMaturingWithin30Days : Money) : List OutflowItem :=
+    (totalFacilityAmount debtMaturingWithin30Days : Money)
+    (observation : ObservationContext) : List OutflowItem :=
   let tot := nonNeg totalFacilityAmount
   let liq := min tot (nonNeg debtMaturingWithin30Days)
   let cred := nonNeg (tot - liq)
-  [ { id := idPrefix ++ "-liq", currency, category := classifyCommittedFacility cp true, amount := liq }
-  , { id := idPrefix ++ "-cred", currency, category := classifyCommittedFacility cp false, amount := cred } ]
+  [ { id := idPrefix ++ "-liq", currency, category := classifyCommittedFacility cp true, amount := liq, observation }
+  , { id := idPrefix ++ "-cred", currency, category := classifyCommittedFacility cp false, amount := cred, observation } ]
 
 /-- Attachment A, Table 3: Derive the 100% collateral substitution outflow from an HQLA
     item if the counterparty can substitute it to non-HQLA without the ADI's consent. -/
 def substitutableCollateralOutflow
     (currency : Currency)
     (hqlaValueAfterHaircut : Money)
-    (substitutableToNonHqlaWithoutConsent : Bool) : OutflowItem :=
+    (substitutableToNonHqlaWithoutConsent : Bool)
+    (observation : ObservationContext) : OutflowItem :=
   { id := "collateral-substitution"
     currency
+    observation
     category := .collateralSubstitutionToNonHqla
     amount := if substitutableToNonHqlaWithoutConsent then nonNeg hqlaValueAfterHaircut else 0 }
 
